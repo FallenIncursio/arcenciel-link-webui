@@ -6,12 +6,12 @@ GR_MAJOR = int(gr.__version__.split(".")[0])
 IS_GR4   = GR_MAJOR >= 4
 
 @contextmanager
-def blocks_with_assets(js: Path, css: Path):
+def blocks_with_assets(js: Path, css: Path, **kw):
     if IS_GR4:
-        with gr.Blocks(js=str(js), css=str(css)) as blk:
+        with gr.Blocks(js=str(js), css=str(css), **kw) as blk:
             yield blk
     else:
-        with gr.Blocks() as blk:
+        with gr.Blocks(**kw) as blk:
             if js.exists():
                 gr.HTML(f"<script>{js.read_text()}</script>")
             if css.exists():

@@ -19,4 +19,8 @@ def blocks_with_assets(js: Path, css: Path):
             yield blk
 
 def register_load_event(container, fn, outputs, every=5):
-    container.load(fn, None, outputs, every=every)
+    if IS_GR4:
+        gr.on(triggers="load", fn=fn, inputs=None, outputs=outputs,
+              every=every)
+    else:
+        container.load(fn, None, outputs, every=every)

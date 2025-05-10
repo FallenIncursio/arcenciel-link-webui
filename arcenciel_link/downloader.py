@@ -178,4 +178,5 @@ def schedule_inventory_push():
     threading.Thread(target=_inventory_loop, daemon=True).start()
 
 
-start_worker()
+if _cfg.get("api_key"): 
+    start_worker()

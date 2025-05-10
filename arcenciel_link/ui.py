@@ -135,9 +135,10 @@ def on_ui_tabs():
     return root, "ArcEnCiel Link", "arcenciel_link_queue"
 
 
-def add_navbar_icon(card):
-    if getattr(card, "elem_id", "") == "settings":
-        with card.parent:
+def add_navbar_icon(*_, **__):
+    comp = _[0] if _ else None 
+    if getattr(comp, "elem_id", "") == "settings": 
+        with comp.parent:
             gr.HTML(
                 """<span id='aec-link-icon' style='cursor:pointer'>
                        <svg width="24" height="24" viewBox="0 0 24 24">

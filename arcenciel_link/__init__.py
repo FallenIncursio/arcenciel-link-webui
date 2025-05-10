@@ -1,6 +1,7 @@
 from modules import script_callbacks
-from .ui import on_ui_tabs, add_navbar_icon
-from .downloader import schedule_inventory_push; schedule_inventory_push()
+from .downloader import schedule_inventory_push
+from .ui         import settings_panel
 
-script_callbacks.on_ui_tabs(on_ui_tabs)
-script_callbacks.on_after_component(add_navbar_icon)
+schedule_inventory_push()
+
+script_callbacks.on_ui_settings(settings_panel)

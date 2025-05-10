@@ -132,7 +132,7 @@ def on_ui_tabs():
         btn_test.click(_test, [base_in, key_in], outputs=test_out)
         btn_close.click(lambda: gr.update(visible=False), None, auth_box)
 
-    return root, "ArcEnCiel Link", "arcenciel_link_queue"
+    return [(root, "ArcEnCiel Link", "arcenciel_link_queue")]
 
 
 def add_navbar_icon(*_, **__):

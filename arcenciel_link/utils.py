@@ -33,10 +33,8 @@ def sha256_of_file(p: Path) -> str:
 CACHE_DIR  = Path(__file__).parent.parent / "cache"
 CACHE_FILE = CACHE_DIR / "hashes.json"
 
-MODEL_DIRS = [
-    "models",
-    "embeddings",
-]
+MODEL_DIRS = ["models", "embeddings", "models/Stable-diffusion",
+              "models/Lora", "models/VAE"]
 
 MODEL_EXTS = {".safetensors", ".ckpt", ".pt"}
 

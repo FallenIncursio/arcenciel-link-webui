@@ -41,7 +41,7 @@ def on_ui_tabs():
         queue_tbl = gr.Dataframe(
             headers = ["id", "versionId", "state", "progress", "targetPath", "message"],
             datatype = ["number", "number", "str", "number", "str", "str"],
-            max_rows = 50,
+            height = 450,
             interactive=True,
             value=_refresh_jobs(),
         )

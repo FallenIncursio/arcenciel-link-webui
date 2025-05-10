@@ -1,0 +1,788 @@
+./arcenciel_link/client.py
+```
+import os, requests
+from .config import load
+
+_cfg = load()
+BASE_URL = _cfg["base_url"].rstrip("/")
+API_KEY  = _cfg["api_key"]
+TIMEOUT    = 15
+
+def headers():
+    return {"x-api-key": API_KEY} if API_KEY else {}
+
+
+def queue_next_job():
+    r = requests.get(f"{BASE_URL}/queue", headers=headers(), timeout=TIMEOUT)
+    if r.status_code == 204:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
+def report_progress(job_id: int, *, progress:int=None, state:str=None, message:str|None=None):
+    payload = {k:v for k,v in [("progress",progress),("state",state),("message",message)] if v is not None}
+    requests.patch(f"{BASE_URL}/queue/{job_id}/progress", json=payload, headers=headers(), timeout=TIMEOUT)
+
+
+def push_inventory(hashes:list[str]):
+    requests.post(f"{BASE_URL}/inventory", json={"hashes":hashes}, headers=headers(), timeout=TIMEOUT)
+
+
+def cancel_job(job_id: int) -> None:
+    r = requests.patch(f"{BASE_URL}/queue/{job_id}/cancel",
+                   headers=headers(), timeout=TIMEOUT)
+    r.raise_for_status()```
+./arcenciel_link/config.py
+```
+import json, os
+from pathlib import Path
+
+_CFG = Path(__file__).parent / "config.json"
+_DEFAULT  = {
+    "base_url": "https://arcenciel.io/api/link",
+    "api_key": "",
+    "min_free_mb": 2048,
+    "max_retries": 5,
+    "backoff_base" : 2,
+    "webui_root": ""
+}
+
+def load() -> dict:
+    if _CFG.exists():
+        try:
+            return {**_DEFAULT, **json.loads(_CFG.read_text())}
+        except Exception:
+            pass
+    return _DEFAULT.copy()
+
+def save(cfg: dict):
+    _CFG.write_text(json.dumps(cfg, indent=2))
+```
+./arcenciel_link/downloader.py
+```
+from __future__ import annotations
+import json
+from textwrap import dedent
+import time, random, threading, traceback, shutil
+from pathlib import Path
+
+import requests
+from .config import load
+from .client import queue_next_job, report_progress, push_inventory
+from .utils import download_file, sha256_of_file, get_model_path, list_model_hashes
+
+_cfg = load()
+MIN_FREE_MB = int(_cfg.get("min_free_mb", 2048))
+MAX_RETRIES = int(_cfg.get("max_retries", 5))
+BACKOFF_BASE = int(_cfg.get("backoff_base", 2))
+
+CHECK_INTERVAL_IDLE = 10
+SLEEP_AFTER_ERROR = 5
+KNOWN_HASHES = set(list_model_hashes())
+
+def _enough_free_space(path: Path, min_mb: int = MIN_FREE_MB) -> bool:
+    free = shutil.disk_usage(path).free // (1024 * 1024)
+    return free >= min_mb
+
+
+def _already_have(hash_: str | None) -> bool:
+    return hash_ in KNOWN_HASHES if hash_ else False
+
+
+def _download_with_retry(url: str, tmp: Path, progress_cb):
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            download_file(url, tmp, progress_cb)
+            return
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            if attempt == MAX_RETRIES:
+                raise
+            time.sleep(BACKOFF_BASE ** attempt + random.uniform(0, 1))
+
+
+def _save_preview(url: str, model_path: Path) -> str | None:
+    if not url:
+        return None
+    suffix        = Path(url).suffix or ".png"
+    preview_file  = model_path.with_name(model_path.stem + "_preview" + suffix)
+    try:
+        with requests.get(url, stream=True, timeout=20) as r:
+            r.raise_for_status()
+            with open(preview_file, "wb") as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
+        return preview_file.name
+    except Exception:
+        return None
+    
+
+def _write_info_json(meta: dict, sha_local: str, preview_name: str | None,
+                     model_path: Path):
+    info = {
+        "schema": 1,
+        "modelId": meta.get("modelId"),
+        "versionId": meta.get("id"),
+        "name": meta.get("modelTitle"),
+        "type": meta.get("type"),
+        "about": meta.get("aboutThisVersion"),
+        "activationTags": meta.get("activationTags"),
+        "sha256": sha_local,
+        "previewFile": preview_name,
+        "arcencielUrl": f"https://arcenciel.io/models/{meta.get('modelId')}",
+    }
+    (model_path.parent / (model_path.stem + ".arcenciel.info")
+     ).write_text(json.dumps(info, indent=2, ensure_ascii=False))
+
+
+def _write_html(meta: dict, preview_name: str | None, model_path: Path):
+    html = dedent(f"""
+    <!doctype html><html lang="en"><meta charset="utf-8">
+    <title>{meta.get('modelTitle','ArcEnCiel Model')}</title>
+    <style>
+      body{{font-family:system-ui, sans-serif; max-width:720px; margin:2rem auto; line-height:1.5}}
+      img{{max-width:100%; border-radius:8px; box-shadow:0 2px 8px #0003}}
+      pre{{background:#f8f8f8; padding:0.75rem 1rem; border-radius:6px; overflow:auto}}
+      .tag{{display:inline-block; background:#eef; color:#226; padding:2px 6px;
+            border-radius:4px; margin:2px; font-size:90%}}
+    </style>
+    <h1>{meta.get('modelTitle','')}</h1>
+    """)
+    if preview_name:
+        html += f'<img src="{preview_name}" alt="preview">'
+    if meta.get("aboutThisVersion"):
+        html += f"<h2>About this version</h2><p>{meta['aboutThisVersion']}</p>"
+    if (tags := meta.get("activationTags")):
+        html += "<h2>Activation Tags</h2>" + \
+                "".join(f'<span class="tag">{t}</span>' for t in tags)
+    html += f"""
+    <hr><p><small>Generated by <b>Arc en Ciel Link</b><br>
+    sha256: {meta.get('sha256','')}</small></p></html>
+    """
+    (model_path.parent / (model_path.stem + ".arcenciel.html")).write_text(html)
+
+
+def _worker():
+    while True:
+        job = queue_next_job()
+        if not job:
+            time.sleep(CHECK_INTERVAL_IDLE)
+            continue
+
+        try:
+            ver = job["version"]
+            meta = (ver.get("meta") or {})
+            url = ver.get("filePath") or ver.get("externalDownloadUrl")
+            if not url:
+                raise RuntimeError("No download URL provided by server")
+
+            sha_server = ver.get("sha256")
+            dst_path   = get_model_path(job["targetPath"]) / Path(url).name
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # free-space guard
+            if not _enough_free_space(dst_path.parent):
+                report_progress(job["id"], state="ERROR",
+                                message=f"Less than {MIN_FREE_MB} MB free")
+                continue
+
+            # already have?
+            if sha_server and _already_have(sha_server):
+                report_progress(job["id"], state="DONE", progress=100)
+                continue
+
+            # download ↓ tmp
+            tmp_path = dst_path.with_suffix(".part")
+            report_progress(job["id"], state="DOWNLOADING", progress=0)
+
+            _download_with_retry(url, tmp_path,
+                                 lambda p: report_progress(job["id"],
+                                                            progress=int(p*100)))
+
+            # hash
+            sha_local = sha256_of_file(tmp_path)
+            if sha_server and sha_local != sha_server:
+                tmp_path.unlink(missing_ok=True)
+                raise RuntimeError("SHA-256 mismatch")
+
+            tmp_path.rename(dst_path)
+
+            # side-cars
+            preview_name = _save_preview(meta.get("preview"), dst_path)
+            _write_info_json(meta, sha_local, preview_name, dst_path)
+            _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
+
+            # done
+            push_inventory([sha_local])
+            KNOWN_HASHES.add(sha_local)
+            report_progress(job["id"], state="DONE", progress=100)
+
+        except Exception as e:
+            traceback.print_exc()
+            report_progress(job["id"], state="ERROR", message=str(e))
+            time.sleep(SLEEP_AFTER_ERROR)
+
+
+def start_worker():
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _inventory_loop():
+    while True:
+        try:
+            push_inventory(list_model_hashes())
+        except Exception:
+            pass
+        time.sleep(3600)
+
+
+def schedule_inventory_push():
+    threading.Thread(target=_inventory_loop, daemon=True).start()
+
+
+start_worker()
+```
+./arcenciel_link/ui.py
+```
+import gradio as gr, requests, os
+from pathlib import Path
+from .config import load, save
+from .client import headers, cancel_job
+from ._compat import blocks_with_assets, register_load_event, IS_GR4
+
+_cfg       = load()
+_THIS_DIR  = Path(__file__).parent
+_JS_FILE   = _THIS_DIR / "script.js"
+_CSS_FILE  = _THIS_DIR / "style.css"
+
+def _refresh_jobs():
+    if not _cfg["api_key"]:
+        return gr.update(value=[["–","–","–","–","–","No API key set"]])
+    try:
+        r = requests.get(f"{_cfg['base_url']}/history?limit=50", headers=headers())
+        r.raise_for_status()
+        jobs = r.json()
+        return [[j[k] for k in ("id","versionId","state","progress","targetPath","message")] for j in jobs]
+    except Exception as e:
+        return gr.update(value=[["–","–","–","–","–", str(e)]])
+
+
+def on_ui_tabs():
+    with blocks_with_assets(_JS_FILE, _CSS_FILE) as root:
+
+        with gr.Box(visible=False, elem_id="aec-auth-dialog") as auth_box:
+            gr.Markdown("#### Arc en Ciel Link – Settings")
+            with gr.Accordion("Advanced (self-host)", open=False):
+                base_in = gr.Textbox(value=_cfg["base_url"], label="Backend URL")
+            key_in = gr.Textbox(value=_cfg["api_key"],  type="password", label="API Key")
+            test_out = gr.Markdown()
+
+            with gr.Row():
+                btn_save  = gr.Button("Save")
+                btn_test  = gr.Button("Test")
+                btn_close = gr.Button("Close")
+
+        gr.Markdown("### Arc en Ciel Link – Download Queue")
+
+        queue_tbl = gr.Dataframe(
+            headers = ["id", "versionId", "state", "progress", "targetPath", "message"],
+            datatype = ["number", "number", "str", "number", "str", "str"],
+            max_rows = 50,
+            interactive=True,
+            value=_refresh_jobs(),
+        )
+
+        sel_state  = gr.State([])
+
+        def _toggle_selection(evt: gr.SelectData, current: list[int]|None):
+            if evt is None or evt.value is None:
+                return current or []
+            row_id = int(evt.value[0])
+            current = (current or []).copy()
+            if row_id in current:
+                current.remove(row_id)
+            else:
+                current.append(row_id)
+            return current
+
+        if IS_GR4:
+            queue_tbl.select(fn=_toggle_selection, inputs=[sel_state], outputs=sel_state)
+
+        with gr.Row():
+            btn_refresh = gr.Button("Refresh")
+            btn_cancel = gr.Button("🗑 Cancel selected")
+
+        status_out = gr.Markdown(visible=False)
+
+        btn_refresh.click(lambda: (_refresh_jobs(), []), inputs=None, outputs=[queue_tbl, sel_state])
+
+        def _cancel(sel):
+            ids = []
+            if sel:
+                if isinstance(sel, list) and isinstance(sel[0], int):
+                    ids = sel
+                elif isinstance(sel, list) and isinstance(sel[0], list):
+                    ids = [int(r[0]) for r in sel]
+                elif isinstance(sel, str):
+                    ids = [int(sel)]
+            ok = 0
+            for jid in ids:
+                try:
+                    cancel_job(jid)
+                    ok += 1
+                except Exception as e:
+                    print("cancel error:", e)
+            txt = f"🗑 {ok} job{'s' if ok!=1 else ''} cancelled"
+            return _refresh_jobs(), [], gr.update(value=txt, visible=True)
+        
+        btn_cancel.click(
+            _cancel,
+            inputs = sel_state,
+            outputs=[queue_tbl, sel_state, status_out]
+        )
+
+        if not IS_GR4:
+            id_box = gr.Textbox(label="Job-ID")
+            btn_cancel.click(
+                lambda jid: _cancel([int(jid.strip())]) if jid and jid.strip()
+                        else (_refresh_jobs(), [], gr.update(value="❌ no id",visible=True)),
+                inputs=id_box,
+                outputs=[queue_tbl, sel_state, status_out]
+            )
+
+        register_load_event(root, _refresh_jobs, queue_tbl, every=5)
+
+        def _save(base_url: str, api_key: str):
+            _cfg.update(base_url=base_url.rstrip("/"), api_key=api_key.strip())
+            save(_cfg)
+
+            import arcenciel_link.client as client
+            client.BASE_URL = _cfg["base_url"].rstrip("/")
+            client.API_KEY = _cfg["api_key"]
+
+            return gr.update(visible=False)
+
+        def _test(base_url: str, api_key: str):
+            try:
+                r  = requests.get(
+                        f"{base_url.rstrip('/')}/health",
+                        timeout=4,
+                        headers={"x-api-key": api_key},
+                    )
+                ok = r.status_code in (200, 204)
+                return f"✅ Success ({r.status_code})" if ok else f"❌ {r.status_code}: {r.text}"
+            except Exception as e:
+                return f"❌ {e}"
+
+        btn_save.click(_save, [base_in, key_in], outputs=auth_box)
+        btn_test.click(_test, [base_in, key_in], outputs=test_out)
+        btn_close.click(lambda: gr.update(visible=False), None, auth_box)
+
+    return root, "ArcEnCiel Link", "arcenciel_link_queue"
+
+
+def add_navbar_icon(card):
+    if getattr(card, "elem_id", "") == "settings":
+        with card.parent:
+            gr.HTML(
+                """<span id='aec-link-icon' style='cursor:pointer'>
+                       <svg width="24" height="24" viewBox="0 0 24 24">
+                           <path fill="currentColor"
+                                 d="M10.59 13.41a1.996 1.996 0 0 1 0-2.82l2.18-2.18a2 2 0 0 1 2.83 2.83l-1.06 1.06
+                                    1.41 1.41 1.06-1.06a4 4 0 0 0-5.66-5.66l-2.18 2.18a4 4 0 0 0 0 5.66l1.06 1.06 1.41-1.41-1.05-1.06Zm2.82-2.82a2 2 0 0 1 0 2.83l-2.18 2.18a2 2 0 0 1-2.83-2.83l1.06-1.06-1.41-1.41-1.06 1.06a4 4 0 1 0 5.66 5.66l2.18-2.18a4 4 0 0 0 0-5.66l-1.06-1.06-1.41 1.41 1.05 1.06Z"/>
+                       </svg>
+                   </span>"""
+            )
+```
+./arcenciel_link/utils.py
+```
+from __future__ import annotations
+import hashlib, json, os, glob, time
+from pathlib import Path
+from typing import Iterable, List, Dict, Generator
+
+import requests
+import tqdm
+import logging
+
+log = logging.getLogger("arcenciel_link")
+log.setLevel(logging.INFO)
+
+def download_file(url: str, dst: Path, progress_cb):
+    with requests.get(url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        total = int(r.headers.get("content-length", 0))
+        with open(dst, "wb") as f, tqdm.tqdm(
+            total=total, unit="B", unit_scale=True, desc=dst.name
+        ) as bar:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+                bar.update(len(chunk))
+                progress_cb(bar.n / total if total else 0)
+
+
+def sha256_of_file(p: Path) -> str:
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+CACHE_DIR  = Path(__file__).parent.parent / "cache"
+CACHE_FILE = CACHE_DIR / "hashes.json"
+
+MODEL_DIRS = [
+    "models",
+    "embeddings",
+]
+
+MODEL_EXTS = {".safetensors", ".ckpt", ".pt"}
+
+
+def _load_cache() -> Dict[str, Dict]:
+    if CACHE_FILE.exists():
+        try:
+            return json.loads(CACHE_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+def _save_cache(data: Dict):
+    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _iter_model_files(root: Path) -> Generator[Path, None, None]:
+    for sub in MODEL_DIRS:
+        base = root / sub
+        if not base.exists():
+            continue
+        pattern = str(base / "**" / "*")
+        for fp in glob.glob(pattern, recursive=True):
+            p = Path(fp)
+            if p.suffix.lower() in MODEL_EXTS and p.is_file():
+                yield p
+
+
+def list_model_hashes() -> List[str]:
+    from .config import load
+    webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
+    cfg = load()
+    if cfg.get("webui_root"):
+        webui_root = Path(cfg["webui_root"])
+
+    cache = _load_cache()
+    updated = False
+    result = []
+
+    for p in _iter_model_files(webui_root):
+        mtime = int(p.stat().st_mtime)
+        key = str(p)
+        entry = cache.get(key)
+
+        if entry and entry["mtime"] == mtime:
+            h = entry["hash"]
+        else:
+            log.info("hashing %s", p)
+            h = sha256_of_file(p)
+            cache[key] = {"mtime": mtime, "hash": h}
+            updated = True
+
+        result.append(h)
+
+    orphan_keys = [k for k in cache if not Path(k).exists()]
+    for k in orphan_keys:
+        del cache[k]
+        updated = True
+
+    if updated:
+        _save_cache(cache)
+
+    return result
+
+
+def get_model_path(target: str) -> Path:
+    webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
+    return webui_root / target
+```
+./arcenciel_link/_compat.py
+```
+import gradio as gr
+from pathlib import Path
+from contextlib import contextmanager
+
+GR_MAJOR = int(gr.__version__.split(".")[0])
+IS_GR4   = GR_MAJOR >= 4
+
+@contextmanager
+def blocks_with_assets(js: Path, css: Path):
+    if IS_GR4:
+        with gr.Blocks(js=str(js), css=str(css)) as blk:
+            yield blk
+    else:
+        with gr.Blocks() as blk:
+            if js.exists():
+                gr.HTML(f"<script>{js.read_text()}</script>")
+            if css.exists():
+                gr.HTML(f"<style>{css.read_text()}</style>")
+            yield blk
+
+def register_load_event(container, fn, outputs, every=5):
+    if IS_GR4:
+        gr.on(triggers="load", fn=fn, inputs=None, outputs=outputs, every=every)
+    else:
+        container.load(fn, None, outputs, every=every)
+```
+./arcenciel_link/__init__.py
+```
+from modules import script_callbacks
+from .ui import on_ui_tabs, add_navbar_icon
+from .downloader import schedule_inventory_push; schedule_inventory_push()
+
+script_callbacks.on_ui_tabs(on_ui_tabs)
+script_callbacks.on_after_component(add_navbar_icon)
+```
+./cache/hashes.json
+```
+```
+./install.py
+```
+import launch # type: ignore
+
+req_file = "requirements.txt"
+with open(req_file) as f:
+    packages = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+
+for p in packages:
+    if not launch.is_installed(p):
+        launch.run_pip(f"install {p}", f"arcenciel-link requirement: {p}")```
+./LICENSE
+```
+# MIT License
+
+Copyright (c) 2025 ArcEnCiel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+./README.md
+```
+# Arc en Ciel Link — AUTOMATIC1111 Extension
+
+> Bring your **Arc en Ciel** models straight into Stable-Diffusion WebUI with one click – now with model-aware routing, live queue, inventory sync **and a shiny built-in progress UI**.
+
+---
+
+## ✨ Features
+
+One-click **➕ Download** on every Arc en Ciel model card – no manual copy-paste.
+
+**Model-aware routing** → checkpoints, LoRAs, VAEs, embeddings land in the correct sub-folder automatically.
+
+Background worker with **retry back-off**, **disk-space guard** and **SHA-256 verification**.
+
+**Live queue tab** inside WebUI: ▸ coloured progress bars  ▸ status-icon (🔴 not linked / 🟢 OK / 🔵 actively downloading).
+
+Hourly **inventory sync** – server skips anything you already have.
+
+**Cover image & arcenciel.info** side-car: preview + JSON metadata + HTML quick-view saved next to each file.
+
+---
+
+## 🛠 Installation
+
+### Fast way (GUI)
+
+1. Open **Stable-Diffusion WebUI**  
+2. `Extensions → Install from URL`  
+3. Paste the repo URL
+
+   ```bash
+   https://github.com/FallenIncursio/arcenciel-link-webui.git
+   ```
+
+4. **Install** → restart WebUI  
+5. You’ll see a new tab **“ArcEnCiel Link”** and a small chain-icon next to the settings cog.
+
+### Manual / dev install
+
+```bash
+cd stable-diffusion-webui/extensions
+git clone https://github.com/FallenIncursio/arcenciel-link-webui.git
+pip install -r arcenciel-link-webui/requirements.txt
+# restart webui
+```
+
+---
+
+## 🔑 First-time setup
+
+1. On [Arc en Ciel](https://arcenciel.io) → **Settings → API Keys → Generate**  
+2. In WebUI click the **chain-icon** (red = not linked) and enter your freshly generated api key.
+3. **Save → Test**.  **✅ Success**?  You’re done!
+
+---
+
+## 🚀 How to use
+
+* Hit **➕** on a model → it pops up in the *ArcEnCiel Link* queue.  
+* Progress is shown as a green bar; the chain-icon turns **🔵 blue** while something is downloading.  
+* Finished items flip to **DONE**; icon returns to **🟢 green**.  
+* LoRAs → `models/Lora`   ·   Checkpoints → `models/Stable-diffusion`   ·   VAEs → `models/VAE`   ·   Embeddings → `embeddings/`  
+* Worker retries 5 × (`2^n` back-off) and aborts gracefully if < 2 GB free.
+
+### Optional cover / metadata
+
+If the server provides them the extension also saves:
+
+```js
+model.safetensors
+model.preview.png
+model.arcenciel.info   # compact JSON
+model.html             # pretty quick-view
+```
+
+> *You can open the `.html` file right inside WebUI’s file browser.*
+
+---
+
+## 🆘 Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| **🔴 red icon** | API key missing/invalid → open the chain-icon and re-enter. |
+| Job sticks in “DOWNLOADING 0 %” | Check free disk space & write permissions. |
+| “SHA256 mismatch” error | Download corrupted; worker will retry – if it keeps failing, report the version ID to Arc en Ciel support. |
+| Covers/metadata not saved | Ensure you pulled the latest backend (needs `*.preview.png` / `*.arcenciel.info` in the job payload). |
+
+---
+
+## 🤝 Contributing
+
+PRs & issue reports welcome – for bigger features open a discussion first.
+
+---
+
+## 📜 License
+
+[MIT](LICENSE)
+```
+./requirements.txt
+```
+requests>=2.31
+tqdm>=4.66
+markdown-it-py>=3.0```
+./script.js
+```
+document.addEventListener("DOMContentLoaded", () => {
+  const grApp = () => gradioApp?.() || document;
+  const icon = grApp().querySelector("#aec-link-icon");
+  const dlg = grApp().querySelector("#aec-auth-dialog");
+  const tbl = () => grApp().querySelector("table[data-testid='queue_tbl']")     // gradio 4
+                    || grApp().querySelector("table");                          // gradio 3
+
+  if (icon && dlg){
+    icon.addEventListener("click", () => dlg.style.display = dlg.style.display ? "" : "block");
+    dlg.querySelector("button:contains('Close')")?.addEventListener("click", () => dlg.style.display = "");
+  }
+
+  async function pollHealth(){
+    try{
+      const base = localStorage.getItem("aec-base");
+      const key  = localStorage.getItem("aec-key");
+      if(!base){ icon?.classList.remove("connected"); return }
+      const r = await fetch(`${base.replace(/\/$/,"")}/health`, { headers:{ "x-api-key":key||"" } });
+      if(r.ok){ icon?.classList.add("connected"); }
+      else    { icon?.classList.remove("connected"); }
+    }catch{ icon?.classList.remove("connected"); }
+  }
+  setInterval(pollHealth, 15000); pollHealth();
+
+  const decorate = () => {
+    const rows = tbl()?.querySelectorAll("tbody tr") || [];
+    let busy = false;
+    rows.forEach(row=>{
+      const cells = row.children;
+      if(cells.length < 4) return;
+      const state = cells[2].innerText.trim();
+      const prog  = Number(cells[3].innerText) || 0;
+      cells[3].classList.add("aec-progress");
+      cells[3].style.setProperty("--p", prog + "%");
+      cells[3].innerHTML = `<span>${prog}%</span>`;
+      if(state === "DOWNLOADING"){ busy = true; }
+    });
+    icon?.classList.toggle("busy", busy);
+  };
+
+  const obs = new MutationObserver(decorate);
+  if(tbl()){ obs.observe(tbl(), { childList:true, subtree:true }); }
+  decorate();
+});
+```
+./style.css
+```
+#aec-link-icon { margin-left:8px; cursor:pointer; color:#f44336; transition:color .2s }
+#aec-link-icon.connected { color:#4caf50 }
+#aec-link-icon.busy { color:#2196f3 }
+
+#aec-auth-dialog {
+  display:none; position:fixed; inset:50% auto auto 50%;
+  transform:translate(-50%,-50%); z-index:9999;
+  background:#fff; padding:2rem 2.5rem; border-radius:10px;
+  box-shadow:0 12px 48px #0005; max-width:420px; width:90%;
+}
+#aec-auth-dialog h4 { margin-top:0 }
+
+.aec-progress {
+  position:relative; min-width:120px; padding-right:0!important;
+  background:#eee; border-radius:4px; overflow:hidden;
+}
+.aec-progress::before{
+  content:""; position:absolute; inset:0;
+  background:#4caf50; width:var(--p,0%); transition:width .3s;
+  opacity:.35
+}
+.aec-progress span { position:relative; z-index:1; display:block; text-align:center }
+
+tr:has(td:nth-child(3):contains("CANCELLED")) { opacity:.4; }```
+./zusammenfassen.sh
+```
+#!/usr/bin/env bash
+
+# Name der Zusammenfassungs-Datei
+output_file="zusammenfassung.txt"
+
+# Vorherige Datei ggf. leeren oder löschen
+> "$output_file"
+
+# Mit find durchsuchen wir alle Unterverzeichnisse.
+# Ausgeschlossen werden soll:
+# - Ordner: .git, node_modules, uploads
+# - Datei: package-lock.json
+
+find . \
+  -type d \( -name ".git" -name ".env" -name ".env.production" -o -name "node_modules" -o -name "uploads" \) -prune -o \
+  -type f ! -name "$output_file" ! -name "package-lock.json" -print |
+while read -r file; do
+  echo "$file" >> "$output_file"
+  echo '```' >> "$output_file"
+  cat "$file" >> "$output_file"
+  echo '```' >> "$output_file"
+done
+```

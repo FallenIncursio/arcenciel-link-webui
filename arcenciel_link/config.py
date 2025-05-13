@@ -38,7 +38,12 @@ def load() -> dict:
     if _detect_dev_mode() and cfg["base_url"] == _DEFAULT["base_url"]:
         cfg["base_url"] = _DEV_URL
 
-    _apply_env_overrides(cfg)
+    try: 
+        from modules import shared 
+        cfg["base_url"] = shared.opts.data.get("arcenciel_link_base_url", cfg["base_url"]) 
+        cfg["api_key"]  = shared.opts.data.get("arcenciel_link_api_key",  cfg["api_key"]) 
+    except Exception: 
+        pass
 
     return cfg
 

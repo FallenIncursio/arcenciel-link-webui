@@ -1,7 +1,8 @@
 from __future__ import annotations
 import hashlib, json, os, glob, time
 from pathlib import Path
-from typing import Iterable, List, Dict, Generator
+from typing import Iterable, List, Dict, Generator, Set
+import shlex, argparse
 
 import requests
 import tqdm
@@ -33,10 +34,43 @@ def sha256_of_file(p: Path) -> str:
 CACHE_DIR  = Path(__file__).parent.parent / "cache"
 CACHE_FILE = CACHE_DIR / "hashes.json"
 
-MODEL_DIRS = ["models", "embeddings", "models/Stable-diffusion",
-              "models/Lora", "models/VAE"]
-
 MODEL_EXTS = {".safetensors", ".ckpt", ".pt"}
+
+KNOWN_HASHES = set()
+
+
+def _get_model_dirs(root: Path) -> List[Path]:
+    dirs: Set[Path] = set()
+
+    dirs.update({
+        root / "models" / "Stable-diffusion",
+        root / "models" / "Lora",
+        root / "models" / "VAE",
+        root / "embeddings",
+    })
+
+    try:
+        from modules import shared
+        co = shared.cmd_opts
+        if getattr(co, "ckpt_dir", None): dirs.add(Path(co.ckpt_dir))
+        if getattr(co, "lora_dir", None): dirs.add(Path(co.lora_dir))
+        if getattr(co, "vae_dir", None): dirs.add(Path(co.vae_dir))
+        if getattr(co, "embeddings_dir", None): dirs.add(Path(co.embeddings_dir))
+    except Exception:
+        pass
+
+    cla = os.getenv("COMMANDLINE_ARGS", "")
+    if cla:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--ckpt-dir")
+        parser.add_argument("--lora-dir")
+        parser.add_argument("--vae-dir")
+        parser.add_argument("--embeddings-dir")
+        args, _ = parser.parse_known_args(shlex.split(cla))
+        for val in vars(args).values():
+            if val: dirs.add(Path(val))
+
+    return [d for d in dirs if d.exists()]
 
 
 def _load_cache() -> Dict[str, Dict]:
@@ -53,10 +87,7 @@ def _save_cache(data: Dict):
 
 
 def _iter_model_files(root: Path) -> Generator[Path, None, None]:
-    for sub in MODEL_DIRS:
-        base = root / sub
-        if not base.exists():
-            continue
+    for base in _get_model_dirs(root):
         pattern = str(base / "**" / "*")
         for fp in glob.glob(pattern, recursive=True):
             p = Path(fp)
@@ -65,6 +96,7 @@ def _iter_model_files(root: Path) -> Generator[Path, None, None]:
 
 
 def list_model_hashes() -> List[str]:
+    KNOWN_HASHES.clear()
     from .config import load
     webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
     cfg = load()
@@ -98,9 +130,51 @@ def list_model_hashes() -> List[str]:
     if updated:
         _save_cache(cache)
 
+    KNOWN_HASHES.update(result)
+
     return result
 
 
+def _cmd_opts() -> Dict[str, str | None]:
+    opts = {"ckpt_dir": None, "lora_dir": None, "vae_dir": None,
+            "embeddings_dir": None}
+
+    try:
+        from modules import shared
+        for k in opts:
+            val = getattr(shared.cmd_opts, k, None)
+            if val: opts[k] = val
+    except Exception:
+        pass
+
+    if not any(opts.values()) and (cla := os.getenv("COMMANDLINE_ARGS")):
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--ckpt-dir")
+        parser.add_argument("--lora-dir")
+        parser.add_argument("--vae-dir")
+        parser.add_argument("--embeddings-dir")
+        args, _ = parser.parse_known_args(shlex.split(cla))
+        for k, v in vars(args).items():
+            if v:
+                opts[k] = v
+
+    return opts
+
+
 def get_model_path(target: str) -> Path:
-    webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
-    return webui_root / target
+    root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
+    opts = _cmd_opts()
+
+    mapping = {
+        "models/Stable-diffusion": opts["ckpt_dir"] or root / "models/Stable-diffusion",
+        "models/Lora": opts["lora_dir"] or root / "models/Lora",
+        "models/VAE": opts["vae_dir"] or root / "models/VAE",
+        "embeddings": opts["embeddings_dir"] or root / "embeddings",
+    }
+
+    for prefix, real_dir in mapping.items():
+        if target.startswith(prefix):
+            tail = target[len(prefix):].lstrip("/\\")
+            return Path(real_dir) / tail if tail else Path(real_dir)
+
+    return root / target

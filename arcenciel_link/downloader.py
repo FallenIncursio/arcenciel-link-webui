@@ -16,7 +16,7 @@ MAX_RETRIES = int(_cfg.get("max_retries", 5))
 BACKOFF_BASE = int(_cfg.get("backoff_base", 2))
 
 SLEEP_AFTER_ERROR = 5
-KNOWN_HASHES = set(list_model_hashes())
+KNOWN_HASHES: set[str] = set()
 
 _backend_ok = False
 _user_disabled = False
@@ -217,13 +217,24 @@ def start_worker():
 def _inventory_loop():
     while True:
         try:
-            push_inventory(list_model_hashes())
+            hashes = list_model_hashes()
+            KNOWN_HASHES.clear()
+            KNOWN_HASHES.update(hashes)
+
+            push_inventory(hashes)
         except Exception:
             pass
         time.sleep(3600)
 
 
 def schedule_inventory_push():
+    try:
+        hashes = list_model_hashes()
+        KNOWN_HASHES.update(hashes)
+        push_inventory(hashes)
+    except Exception:
+        pass
+
     threading.Thread(target=_inventory_loop, daemon=True).start()
 
 

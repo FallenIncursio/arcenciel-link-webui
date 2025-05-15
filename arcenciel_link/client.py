@@ -3,8 +3,8 @@ from .config import load
 
 _cfg = load()
 BASE_URL = _cfg["base_url"].rstrip("/")
-API_KEY  = _cfg["api_key"]
-TIMEOUT    = 15
+API_KEY = _cfg["api_key"]
+TIMEOUT = 15
 
 def headers():
     return {"x-api-key": API_KEY} if API_KEY else {}

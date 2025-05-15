@@ -1,8 +1,9 @@
 from __future__ import annotations
 import json
 from textwrap import dedent
-import time, random, threading, traceback, shutil
+import time, random, threading, shutil
 from pathlib import Path
+import threading
 
 import requests
 from .config import load
@@ -14,9 +15,20 @@ MIN_FREE_MB = int(_cfg.get("min_free_mb", 2048))
 MAX_RETRIES = int(_cfg.get("max_retries", 5))
 BACKOFF_BASE = int(_cfg.get("backoff_base", 2))
 
-CHECK_INTERVAL_IDLE = 10
 SLEEP_AFTER_ERROR = 5
 KNOWN_HASHES = set(list_model_hashes())
+
+_backend_ok = False
+_user_disabled = False
+RUNNING = threading.Event()
+
+def _heartbeat():
+    try:
+        queue_next_job()
+    except:
+        pass
+
+HEARTBEAT_INTERVAL = 5
 
 def _enough_free_space(path: Path, min_mb: int = MIN_FREE_MB) -> bool:
     free = shutil.disk_usage(path).free // (1024 * 1024)
@@ -101,10 +113,32 @@ def _write_html(meta: dict, preview_name: str | None, model_path: Path):
 
 
 def _worker():
+    global _backend_ok
+
+    last_hb = 0 
     while True:
-        job = queue_next_job()
-        if not job:
-            time.sleep(CHECK_INTERVAL_IDLE)
+        RUNNING.wait()
+
+        now = time.time()
+        if now - last_hb > HEARTBEAT_INTERVAL:
+            _heartbeat()
+            last_hb = now
+
+        try: 
+            job = queue_next_job() 
+
+            if job is None:
+                time.sleep(2) 
+                continue  
+
+            if not _backend_ok:
+                print("[AEC-LINK] 🟢  connected")
+            _backend_ok = True 
+        except Exception as e: 
+            if _backend_ok:
+                print("[AEC-LINK] 🔴  disconnected") 
+            _backend_ok = False 
+            time.sleep(SLEEP_AFTER_ERROR) 
             continue
 
         try:
@@ -155,10 +189,25 @@ def _worker():
             KNOWN_HASHES.add(sha_local)
             report_progress(job["id"], state="DONE", progress=100)
 
-        except Exception as e:
-            traceback.print_exc()
-            report_progress(job["id"], state="ERROR", message=str(e))
+        except Exception as e: 
+            print(f"[AEC-LINK] ❌ worker error – {e}") 
+            report_progress(job["id"], state="ERROR", message=str(e)) 
             time.sleep(SLEEP_AFTER_ERROR)
+
+
+def toggle_worker(enable: bool): 
+    global _backend_ok, _user_disabled 
+ 
+    if enable: 
+        _user_disabled = False 
+        RUNNING.set() 
+        _backend_ok = True
+        print("[AEC-LINK] ▶️  worker ENABLED", flush=True) 
+    else: 
+        _user_disabled = True 
+        RUNNING.clear() 
+        print("[AEC-LINK] ⏹  worker DISABLED by user", flush=True) 
+        _backend_ok = False
 
 
 def start_worker():
@@ -178,5 +227,4 @@ def schedule_inventory_push():
     threading.Thread(target=_inventory_loop, daemon=True).start()
 
 
-if _cfg.get("api_key"): 
-    start_worker()
+start_worker()

@@ -10,6 +10,18 @@ def headers():
     return {"x-api-key": API_KEY} if API_KEY else {}
 
 
+# one-shot health-check so the user sees a console message 
+def check_backend_health(): 
+    try: 
+        r = requests.get(f"{BASE_URL}/health", headers=headers(), timeout=TIMEOUT) 
+        r.raise_for_status() 
+        print(f"[AEC-LINK] ✅ connected to {BASE_URL}") 
+        return True 
+    except Exception as e: 
+        print(f"[AEC-LINK] ❌ backend not reachable – {e}") 
+        return False
+
+
 def queue_next_job():
     r = requests.get(f"{BASE_URL}/queue", headers=headers(), timeout=TIMEOUT)
     if r.status_code == 204:

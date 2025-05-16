@@ -85,16 +85,23 @@ def _download_with_retry(url: str, tmp: Path, progress_cb):
 def _save_preview(url: str, model_path: Path) -> str | None:
     if not url:
         return None
-    suffix        = Path(url).suffix or ".png"
-    preview_file  = model_path.with_name(model_path.stem + "_preview" + suffix)
-    try:
-        with requests.get(url, stream=True, timeout=20) as r:
-            r.raise_for_status()
-            with open(preview_file, "wb") as f:
-                for chunk in r.iter_content(8192):
-                    f.write(chunk)
-        return preview_file.name
-    except Exception:
+    suffix = Path(url).suffix or ".png"
+    stem_no_ext = model_path.with_suffix("")
+    preview_file = stem_no_ext.with_suffix(suffix)
+    if preview_file.exists():
+        preview_file = stem_no_ext.with_suffix(".preview" + suffix)
+    
+    try: 
+        print(f"[AEC-LINK] ↓ preview {url}", flush=True) 
+        with requests.get(url, stream=True, timeout=20) as r: 
+            r.raise_for_status() 
+            with open(preview_file, "wb") as f: 
+                for chunk in r.iter_content(8192): 
+                    f.write(chunk) 
+        print(f"[AEC-LINK] ✅ preview saved as {preview_file}", flush=True) 
+        return preview_file.name 
+    except Exception as e: 
+        print(f"[AEC-LINK] ⚠️  preview download failed – {e}", flush=True) 
         return None
     
 
@@ -237,8 +244,11 @@ def _worker():
             _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
 
             # done
-            push_inventory([sha_local])
-            KNOWN_HASHES.add(sha_local)
+            hashes = list_model_hashes()
+            KNOWN_HASHES.clear(); 
+            KNOWN_HASHES.update(hashes) 
+            
+            push_inventory(hashes)
             report_progress(job["id"], state="DONE", progress=100)
             _print_progress(label)
 

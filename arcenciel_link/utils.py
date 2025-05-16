@@ -1,11 +1,10 @@
 from __future__ import annotations
-import hashlib, json, os, glob, time
+import hashlib, json, os, glob
 from pathlib import Path
-from typing import Iterable, List, Dict, Generator, Set
+from typing import List, Dict, Generator, Set
 import shlex, argparse
 
 import requests
-import tqdm
 import logging
 
 log = logging.getLogger("arcenciel_link")
@@ -15,13 +14,14 @@ def download_file(url: str, dst: Path, progress_cb):
     with requests.get(url, stream=True, timeout=60) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
-        with open(dst, "wb") as f, tqdm.tqdm(
-            total=total, unit="B", unit_scale=True, desc=dst.name
-        ) as bar:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-                bar.update(len(chunk))
-                progress_cb(bar.n / total if total else 0)
+        chunk = 1024 * 1024
+        with open(dst, "wb") as f:
+            done = 0
+            for part in r.iter_content(chunk_size=chunk):
+                f.write(part)
+                done += len(part)
+                if total:
+                    progress_cb(done / total)
 
 
 def sha256_of_file(p: Path) -> str:

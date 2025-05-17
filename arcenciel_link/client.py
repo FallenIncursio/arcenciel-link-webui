@@ -1,4 +1,4 @@
-import os, requests
+import requests
 from .config import load
 
 _cfg = load()

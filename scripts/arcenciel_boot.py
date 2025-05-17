@@ -1,1 +1,2 @@
 import arcenciel_link
+import arcenciel_link.settings

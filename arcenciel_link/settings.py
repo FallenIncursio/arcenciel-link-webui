@@ -1,5 +1,5 @@
 from modules import shared, script_callbacks
-from .config import load, save
+from .config import load, save, _detect_dev_mode
 
 _cfg = load()
 
@@ -16,10 +16,16 @@ def _apply_opts():
 
 def on_ui_settings():
     section = ("arcenciel_link", "ArcEnCiel")
-    shared.opts.add_option(
-        "arcenciel_link_base_url",
-        shared.OptionInfo(_cfg["base_url"], "Backend URL", section=section, onchange=_apply_opts)
-    )
+    if _detect_dev_mode(): 
+        shared.opts.add_option( 
+            "arcenciel_link_base_url", 
+            shared.OptionInfo( 
+                _cfg["base_url"], 
+                "Backend URL (dev only)", 
+                section=section, 
+                onchange=_apply_opts, 
+            ), 
+        )
     shared.opts.add_option(
         "arcenciel_link_api_key",
         shared.OptionInfo(_cfg["api_key"], "API Key", section=section, onchange=_apply_opts)

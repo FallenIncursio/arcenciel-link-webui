@@ -324,3 +324,40 @@ def schedule_inventory_push():
 
 
 start_worker()
+
+def generate_sidecars_for_existing():
+    from .utils import _load_cache 
+    cache = _load_cache() 
+    model_files = {v["hash"]: Path(k)
+                   for k, v in cache.items() 
+                   if Path(k).exists()}
+    if not model_files:
+        return
+
+    try:
+        resp = requests.post(
+            _cfg["base_url"].rstrip("/") + "/sidecars/meta",
+            json={"hashes": list(model_files.keys())},
+            headers={"x-api-key": _cfg["api_key"]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        metas = resp.json()
+    except Exception as e:
+        print("[AEC-LINK] sidecar-meta fetch failed", e)
+        return
+
+    for h, path in model_files.items():
+        meta = metas.get(h)
+        if not meta:
+            continue
+
+        dst_path = Path(path)
+        if (dst_path.with_suffix(".arcenciel.info")).exists():
+            continue
+
+        print(f"[AEC-LINK] ✍  sidecars for {dst_path.name}")
+        preview = _save_preview(meta.get("preview"), dst_path)
+        _write_info_json(meta, h, preview, dst_path)
+        if _cfg.get("save_html_preview"):
+            _write_html(meta | {"sha256": h}, preview, dst_path)

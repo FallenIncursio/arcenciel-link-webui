@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Response, Body
+from fastapi import APIRouter, Body
 from fastapi.responses import PlainTextResponse, JSONResponse
-from .downloader import toggle_worker
+from .downloader import toggle_worker, generate_sidecars_for_existing
 from .utils import list_subfolders 
+import threading
 
 router = APIRouter(prefix="/arcenciel")
 
@@ -25,3 +26,12 @@ def list_folders(kind: str):
     except KeyError: 
         return JSONResponse({"error": "unknown kind"}, status_code=400, 
                             headers={"Access-Control-Allow-Origin": "*"})
+    
+@router.post("/generate_sidecars")
+def generate_sidecars():
+    threading.Thread( 
+        target=generate_sidecars_for_existing, 
+        daemon=True 
+    ).start() 
+    return JSONResponse({"ok": True}, 
+                        headers={"Access-Control-Allow-Origin": "*"})

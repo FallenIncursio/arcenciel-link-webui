@@ -110,19 +110,31 @@ def _write_info_json(meta: dict, sha_local: str, preview_name: str | None,
     info = {
         "schema": 1,
         "modelId": meta.get("modelId"),
-        "versionId": meta.get("id"),
+        "versionId": meta.get("versionId"),
         "name": meta.get("modelTitle"),
         "type": meta.get("type"),
-        "about": meta.get("aboutThisVersion"),
+        "about": meta.get("aboutThisVersion") or meta.get("about"),
+        "description": meta.get("modelDescription") or meta.get("description"),
         "activationTags": meta.get("activationTags"),
         "sha256": sha_local,
-        "previewFile": preview_name,
+        "previewFile":  preview_name,
         "arcencielUrl": f"https://arcenciel.io/models/{meta.get('modelId')}",
     }
     (model_path.parent / (model_path.stem + ".arcenciel.info")).write_text(
         json.dumps(info, indent=2, ensure_ascii=False),
         encoding="utf-8"
     )
+
+    sd_meta = {
+        "description": f"{info.get('modelDescription','')}",
+        "sd version": "unknown",
+        "activation text": ", ".join(meta.get("activationTags") or []),
+        "preferred weight": 1.0,
+        "notes": info["arcencielUrl"],
+    }
+    sd_file = model_path.parent / (model_path.stem + ".json")
+    sd_file.write_text(json.dumps(sd_meta, indent=2, ensure_ascii=False),
+                       encoding="utf-8")
 
 
 def _write_html(meta: dict, preview_name: str | None, model_path: Path):

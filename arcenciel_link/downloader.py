@@ -7,6 +7,7 @@ import threading
 import os, re
 import sys
 from io import BytesIO
+from urllib.parse import urlparse, unquote
 
 import requests
 from .config import load
@@ -207,17 +208,20 @@ def _worker():
         try:
             ver = job["version"]
             meta = (ver.get("meta") or {})
-            url = ver.get("externalDownloadUrl") or ver.get("filePath")
-            if not url:
+            url_raw = ver.get("externalDownloadUrl") or ver.get("filePath")
+            
+            if not url_raw:
                 raise RuntimeError("No download URL provided by server")
 
+            url_path  = unquote(urlparse(url_raw).path)
+
             sha_server = ver.get("sha256")
-            dst_path = get_model_path(job["targetPath"]) / Path(url).name
+            dst_path = get_model_path(job["targetPath"]) / Path(url_path).name
 
             dst_dir = get_model_path(job["targetPath"]) 
             dst_dir.mkdir(parents=True, exist_ok=True) 
  
-            raw_name = Path(url).name          # 6588bcd7_foo.safetensors 
+            raw_name = Path(url_path).name          # 6588bcd7_foo.safetensors 
             clean_name  = _clean(raw_name)        # foo.safetensors 
  
             # »foo.safetensors«, »foo_1.safetensors«, »foo_2…« 
@@ -248,7 +252,7 @@ def _worker():
                 report_progress(job["id"], progress=pct)
                 _print_progress(label, pct)
 
-            _download_with_retry(url, tmp_path, _progress_cb)
+            _download_with_retry(url_raw, tmp_path, _progress_cb)
 
             # hash
             sha_local = sha256_of_file(tmp_path)

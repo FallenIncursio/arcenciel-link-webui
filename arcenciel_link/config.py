@@ -8,7 +8,8 @@ _DEFAULT = {
     "min_free_mb": 2048,
     "max_retries": 5,
     "backoff_base": 2,
-    "webui_root": ""
+    "webui_root": "",
+    "save_html_preview": False
 }
 
 _DEV_URL = "http://localhost:3000/api/link"

@@ -126,7 +126,7 @@ def _write_info_json(meta: dict, sha_local: str, preview_name: str | None,
     )
 
     sd_meta = {
-        "description": f"{info.get('modelDescription','')}",
+        "description": info["about"],
         "sd version": "unknown",
         "activation text": ", ".join(meta.get("activationTags") or []),
         "preferred weight": 1.0,
@@ -253,7 +253,8 @@ def _worker():
             # side-cars
             preview_name = _save_preview(meta.get("preview"), dst_path)
             _write_info_json(meta, sha_local, preview_name, dst_path)
-            _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
+            if _cfg.get("save_html_preview"):
+                _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
 
             # done
             hashes = list_model_hashes()

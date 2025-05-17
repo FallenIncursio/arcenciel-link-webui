@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Response, Body
 from fastapi.responses import PlainTextResponse, JSONResponse
 from .downloader import toggle_worker
+from .utils import list_subfolders 
 
 router = APIRouter(prefix="/arcenciel")
 
@@ -14,3 +15,13 @@ def toggle_link(enable: bool = Body(..., embed=True)):
     toggle_worker(enable) 
     return JSONResponse({"ok": True}, 
                         headers={"Access-Control-Allow-Origin": "*"})
+
+@router.get("/folders/{kind}") 
+def list_folders(kind: str): 
+    try: 
+        folders = list_subfolders(kind) 
+        return JSONResponse({"folders": folders}, 
+                            headers={"Access-Control-Allow-Origin": "*"}) 
+    except KeyError: 
+        return JSONResponse({"error": "unknown kind"}, status_code=400, 
+                            headers={"Access-Control-Allow-Origin": "*"})

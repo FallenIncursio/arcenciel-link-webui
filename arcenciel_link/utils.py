@@ -39,6 +39,28 @@ MODEL_EXTS = {".safetensors", ".ckpt", ".pt"}
 KNOWN_HASHES = set()
 
 
+def list_subfolders(kind: str) -> list[str]: 
+    base = { 
+        "checkpoint": "models/Stable-diffusion", 
+        "lora": "models/Lora", 
+        "vae": "models/VAE", 
+        "embedding": "embeddings", 
+    }[kind.lower()] 
+ 
+    root = Path(get_model_path(base)) 
+    if not root.exists(): 
+        return [] 
+ 
+    out: list[str] = [] 
+    for p in root.rglob("*"): 
+        if p.is_dir() and not p.name.startswith("."): 
+            rel = p.relative_to(root).as_posix()
+            if rel: 
+                out.append(rel) 
+ 
+    return sorted(out)
+
+
 def _get_model_dirs(root: Path) -> List[Path]:
     dirs: Set[Path] = set()
 

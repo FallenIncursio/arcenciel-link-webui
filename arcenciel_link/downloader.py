@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 import os, re
 import sys
+from io import BytesIO
 
 import requests
 from .config import load
@@ -33,6 +34,11 @@ _RND_PREFIX = re.compile(
 def _clean(name: str) -> str:
     return _RND_PREFIX.sub('', name, count=1)
 
+try: 
+    from PIL import Image
+    _HAS_PIL = True 
+except ImportError: 
+    _HAS_PIL = False
 
 def _unique_filename(dir_: Path, name: str) -> Path:
     stem, ext = os.path.splitext(name)
@@ -85,19 +91,21 @@ def _download_with_retry(url: str, tmp: Path, progress_cb):
 def _save_preview(url: str, model_path: Path) -> str | None:
     if not url:
         return None
-    suffix = Path(url).suffix or ".png"
-    stem_no_ext = model_path.with_suffix("")
-    preview_file = stem_no_ext.with_suffix(suffix)
-    if preview_file.exists():
-        preview_file = stem_no_ext.with_suffix(".preview" + suffix)
+    preview_file = model_path.with_suffix(".preview.png") 
+    if preview_file.exists(): 
+        preview_file = _unique_filename(preview_file.parent, preview_file.stem + ".png")
     
     try: 
         print(f"[AEC-LINK] ↓ preview {url}", flush=True) 
-        with requests.get(url, stream=True, timeout=20) as r: 
-            r.raise_for_status() 
+        r = requests.get(url, timeout=20) 
+        r.raise_for_status() 
+ 
+        if _HAS_PIL: 
+            img = Image.open(BytesIO(r.content)).convert("RGBA") 
+            img.save(preview_file, format="PNG") 
+        else: 
             with open(preview_file, "wb") as f: 
-                for chunk in r.iter_content(8192): 
-                    f.write(chunk) 
+                f.write(r.content)
         print(f"[AEC-LINK] ✅ preview saved as {preview_file}", flush=True) 
         return preview_file.name 
     except Exception as e: 

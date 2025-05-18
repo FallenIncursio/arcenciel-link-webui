@@ -79,7 +79,8 @@ model.html             # pretty quick-view
 
 ## 📹 Video Tutorial
 
-A short walkthrough video will be added here soon.
+https://github.com/user-attachments/assets/7c0557d6-6ec6-40d4-b186-cd1e51f61cae
+
 
 ## 🆘 Troubleshooting
 

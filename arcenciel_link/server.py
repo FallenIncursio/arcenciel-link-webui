@@ -1,10 +1,23 @@
 from fastapi import APIRouter, Body
-from fastapi.responses import PlainTextResponse, JSONResponse
-from .downloader import toggle_worker, generate_sidecars_for_existing
+from fastapi.responses import PlainTextResponse, JSONResponse, Response
+from .downloader import toggle_worker, generate_sidecars_for_existing, RUNNING
 from .utils import list_subfolders 
 import threading
+import time
 
 router = APIRouter(prefix="/arcenciel-link")
+
+@router.options("/{path:path}", include_in_schema=False) 
+def _cors_preflight(path: str): 
+    return Response( 
+        status_code=204, 
+        headers={ 
+            "Access-Control-Allow-Origin":  "*", 
+            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS", 
+            "Access-Control-Allow-Headers": "*", 
+            "Access-Control-Max-Age":       "86400", 
+        }, 
+    )
 
 @router.get("/ping", response_class=PlainTextResponse) 
 def ping() -> PlainTextResponse: 
@@ -14,8 +27,15 @@ def ping() -> PlainTextResponse:
 def toggle_link(enable: bool = Body(..., embed=True)): 
     """Start/stop the download worker from the browser UI.""" 
     toggle_worker(enable) 
-    return JSONResponse({"ok": True}, 
-                        headers={"Access-Control-Allow-Origin": "*"})
+    if enable:
+        t0 = time.perf_counter() 
+        while not RUNNING.is_set() and time.perf_counter() - t0 < 3: 
+            time.sleep(0.05) 
+ 
+    return JSONResponse( 
+        {"ok": True, "workerOnline": RUNNING.is_set()}, 
+        headers={"Access-Control-Allow-Origin": "*"}, 
+    )
 
 @router.get("/folders/{kind}") 
 def list_folders(kind: str): 

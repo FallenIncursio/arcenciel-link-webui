@@ -12,7 +12,7 @@ One-click **➕ Download** on every Arc en Ciel model card – no manual copy-pa
 
 Background worker with **retry back-off**, **disk-space guard** and **SHA-256 verification**.
 
-**Live queue tab** inside WebUI: ▸ coloured progress bars  ▸ status-icon (🔴 not linked / 🟢 OK / 🔵 actively downloading).
+Console progress messages with coloured status (🔴 not linked / 🟢 OK / 🔵 actively downloading).
 
 Hourly **inventory sync** – server skips anything you already have.
 
@@ -33,7 +33,7 @@ Hourly **inventory sync** – server skips anything you already have.
    ```
 
 4. **Install** → restart WebUI  
-5. You’ll see a new tab **“ArcEnCiel Link”** and a small chain-icon next to the settings cog.
+5. You’ll find a new **ArcEnCiel** section under WebUI **Settings**.
 
 ### Manual / dev install
 
@@ -49,16 +49,15 @@ pip install -r arcenciel-link-webui/requirements.txt
 ## 🔑 First-time setup
 
 1. On [Arc en Ciel](https://arcenciel.io) → **Settings → API Keys → Generate**  
-2. In WebUI click the **chain-icon** (red = not linked) and enter your freshly generated api key.
-3. **Save → Test**.  **✅ Success**?  You’re done!
+2. In WebUI open **Settings → ArcEnCiel** and paste your newly created API key.
+3. **Save** the settings.  **✅ Success** messages appear in the console once connected.
 
 ---
 
 ## 🚀 How to use
 
 * Hit **➕** on a model → it pops up in the *ArcEnCiel Link* queue.  
-* Progress is shown as a green bar; the chain-icon turns **🔵 blue** while something is downloading.  
-* Finished items flip to **DONE**; icon returns to **🟢 green**.  
+* Download progress is logged in the console; status messages show **🔵 downloading** and **🟢 done**.
 * LoRAs → `models/Lora`   ·   Checkpoints → `models/Stable-diffusion`   ·   VAEs → `models/VAE`   ·   Embeddings → `embeddings/`  
 * Worker retries 5 × (`2^n` back-off) and aborts gracefully if < 2 GB free.
 
@@ -73,15 +72,20 @@ model.arcenciel.info   # compact JSON
 model.html             # pretty quick-view
 ```
 
+> **Note:** HTML quick-view generation is disabled by default. After starting WebUI once you can enable it by editing `arcenciel_link/config.json` and setting `"save_html_preview": true`.
 > *You can open the `.html` file right inside WebUI’s file browser.*
 
 ---
+
+## 📹 Video Tutorial
+
+A short walkthrough video will be added here soon.
 
 ## 🆘 Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| **🔴 red icon** | API key missing/invalid → open the chain-icon and re-enter. |
+| **🔴 not linked** | API key missing or invalid → open **Settings → ArcEnCiel** and re-enter. |
 | Job sticks in “DOWNLOADING 0 %” | Check free disk space & write permissions. |
 | “SHA256 mismatch” error | Download corrupted; worker will retry – if it keeps failing, report the version ID to Arc en Ciel support. |
 | Covers/metadata not saved | Ensure you pulled the latest backend (needs `*.preview.png` / `*.arcenciel.info` in the job payload). |

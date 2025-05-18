@@ -25,7 +25,7 @@ def _mount_api(*args):
             else:
                 raise
 
-    if not any(r.path.startswith("/arcenciel/") for r in app.router.routes):
+    if not any(r.path.startswith("/arcenciel-link/") for r in app.router.routes):
         app.include_router(_api_router)
 
 _cfg = _load_cfg()

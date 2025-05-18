@@ -4,7 +4,7 @@ from .downloader import toggle_worker, generate_sidecars_for_existing
 from .utils import list_subfolders 
 import threading
 
-router = APIRouter(prefix="/arcenciel")
+router = APIRouter(prefix="/arcenciel-link")
 
 @router.get("/ping", response_class=PlainTextResponse) 
 def ping() -> PlainTextResponse: 

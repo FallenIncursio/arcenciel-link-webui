@@ -137,7 +137,7 @@ def _write_info_json(meta: dict, sha_local: str, preview_name: str | None,
     sd_meta = {
         "description": info["about"],
         "sd version": "unknown",
-        "activation text": ", ".join(meta.get("activationTags") or []),
+        "activation text": "\n".join(meta.get("activationTags") or []),
         "preferred weight": 1.0,
         "notes": info["arcencielUrl"],
     }

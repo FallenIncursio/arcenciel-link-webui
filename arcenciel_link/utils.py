@@ -104,7 +104,7 @@ def _load_cache() -> Dict[str, Dict]:
     return {}
 
 def _save_cache(data: Dict):
-    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_FILE.write_text(json.dumps(data, indent=2))
 
 

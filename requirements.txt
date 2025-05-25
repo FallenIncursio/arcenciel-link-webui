@@ -1,3 +1,5 @@
 requests>=2.31
 tqdm>=4.66
 markdown-it-py>=3.0
+websocket-client>=1.6
+Pillow

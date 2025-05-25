@@ -7,18 +7,6 @@ import time
 
 router = APIRouter(prefix="/arcenciel-link")
 
-@router.options("/{path:path}", include_in_schema=False) 
-def _cors_preflight(path: str): 
-    return Response( 
-        status_code=204, 
-        headers={ 
-            "Access-Control-Allow-Origin":  "*", 
-            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS", 
-            "Access-Control-Allow-Headers": "*", 
-            "Access-Control-Max-Age":       "86400", 
-        }, 
-    )
-
 @router.get("/ping", response_class=PlainTextResponse) 
 def ping() -> PlainTextResponse: 
     return PlainTextResponse("ok", headers={"Access-Control-Allow-Origin": "*"}) 

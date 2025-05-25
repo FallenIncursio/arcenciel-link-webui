@@ -3,7 +3,6 @@ import json
 from textwrap import dedent
 import time, random, threading, shutil
 from pathlib import Path
-import threading
 import os, re
 import sys
 from io import BytesIO
@@ -11,7 +10,7 @@ from urllib.parse import urlparse, unquote
 
 import requests
 from .config import load
-from .client import queue_next_job, report_progress, push_inventory
+from .client import BASE_URL, queue_next_job, report_progress, push_inventory, _sock, _open_evt
 from .utils import download_file, sha256_of_file, get_model_path, list_model_hashes
 
 _cfg = load()
@@ -42,7 +41,7 @@ except ImportError:
     _HAS_PIL = False
 
 def _unique_filename(dir_: Path, name: str) -> Path:
-    stem, ext = os.path.splitext(name)
+    stem, ext = os.path.splitext(name or "_")
     candidate = name
     idx = 1
     while (dir_ / candidate).exists() or (dir_ / (candidate + '.part')).exists():
@@ -52,10 +51,11 @@ def _unique_filename(dir_: Path, name: str) -> Path:
 
 
 def _heartbeat():
-    try:
-        queue_next_job()
-    except:
-        pass
+    if _open_evt.is_set(): 
+        try: 
+            _sock.send('{"type":"poll"}') 
+        except Exception: 
+            pass
 
 HEARTBEAT_INTERVAL = 5
 
@@ -82,7 +82,7 @@ def _download_with_retry(url: str, tmp: Path, progress_cb):
         try:
             download_file(url, tmp, progress_cb)
             return
-        except Exception:
+        except Exception as e:
             tmp.unlink(missing_ok=True)
             if attempt == MAX_RETRIES:
                 raise
@@ -191,9 +191,9 @@ def _worker():
         try: 
             job = queue_next_job() 
 
-            if job is None:
+            if job is None: 
                 time.sleep(2) 
-                continue  
+                continue
 
             if not _backend_ok:
                 print("[AEC-LINK] 🟢  connected")
@@ -209,6 +209,12 @@ def _worker():
             ver = job["version"]
             meta = (ver.get("meta") or {})
             url_raw = ver.get("externalDownloadUrl") or ver.get("filePath")
+
+            if url_raw and not url_raw.startswith(("http://", "https://")): 
+                from urllib.parse import urljoin 
+
+                root = BASE_URL.split("/api/")[0].rstrip("/") 
+                url_raw = urljoin(root + "/", url_raw.lstrip("/"))
             
             if not url_raw:
                 raise RuntimeError("No download URL provided by server")
@@ -243,7 +249,7 @@ def _worker():
             label = dst_path.name
 
             # download ↓ tmp
-            tmp_path = dst_path.with_suffix(".part")
+            tmp_path = dst_path.with_suffix(".part")                
             report_progress(job["id"], state="DOWNLOADING", progress=0)
             _print_progress(label, 0)
 

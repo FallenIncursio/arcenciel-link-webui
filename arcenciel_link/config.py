@@ -3,13 +3,18 @@ from pathlib import Path
 
 _CFG = Path(__file__).parent / "config.json"
 _DEFAULT = {
-    "base_url": "https://arcenciel.io/api/link",
+    "base_url": "https://link.arcenciel.io/api/link",
     "api_key" : "",
     "min_free_mb": 2048,
     "max_retries": 5,
     "backoff_base": 2,
     "webui_root": "",
     "save_html_preview": False
+}
+
+OLD_URLS = {
+    "https://arcenciel.io/api/link",
+    "https://arcenciel.io/api/link/",
 }
 
 _DEV_URL = "http://localhost:3000/api/link"
@@ -32,6 +37,12 @@ def load() -> dict:
     if _CFG.exists():
         try:
             cfg.update(json.loads(_CFG.read_text()))
+            if cfg["base_url"] in OLD_URLS:
+                cfg["base_url"] = _DEFAULT["base_url"]
+                try:
+                    _CFG.write_text(json.dumps(cfg, indent=2))
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -45,6 +56,8 @@ def load() -> dict:
         cfg["api_key"]  = shared.opts.data.get("arcenciel_link_api_key",  cfg["api_key"]) 
     except Exception: 
         pass
+
+    _apply_env_overrides(cfg)
 
     return cfg
 

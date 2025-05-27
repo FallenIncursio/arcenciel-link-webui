@@ -6,6 +6,7 @@ from .client import check_backend_health
 from .config import load as _load_cfg
 from .downloader import schedule_inventory_push
 from .server import router as _api_router
+from .pna_middleware import PrivateNetworkMiddleware
 
 schedule_inventory_push()
 check_backend_health()
@@ -14,6 +15,21 @@ def _mount_api(*args, **kwargs):
     if not args:
         return
     app = args[-1]
+
+    if not any(m.cls is PrivateNetworkMiddleware for m in app.user_middleware): 
+        try: 
+            app.add_middleware(PrivateNetworkMiddleware) 
+            print("[AEC-LINK] ✅ PNA middleware added") 
+        except RuntimeError: 
+            try: 
+                app.user_middleware.insert( 
+                    0, 
+                    Middleware(PrivateNetworkMiddleware), 
+                ) 
+                app.middleware_stack = app.build_middleware_stack() 
+                print("[AEC-LINK] ✅ PNA middleware injected late") 
+            except Exception as e: 
+                print("[AEC-LINK] ❌ late PNA injection failed –", e)
 
     if not any(isinstance(m, CORSMiddleware) for m in app.user_middleware):
         try:

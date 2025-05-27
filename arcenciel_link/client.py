@@ -8,7 +8,11 @@ API_KEY = _cfg["api_key"]
 TIMEOUT = 15
 HEARTBEAT_INTERVAL = 5
 
-_WS_URL = BASE_URL.replace("https://","wss://").replace("http://","ws://")
+_WS_URL = ( 
+     BASE_URL.replace("https://", "wss://") 
+             .replace("http://", "ws://") 
+             .rstrip("/") + "/ws" 
+ )
  
 _sock = None
 _job_queue = queue.Queue()

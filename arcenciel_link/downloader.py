@@ -8,10 +8,9 @@ import sys
 from io import BytesIO
 from urllib.parse import urlparse, unquote
 
-import requests
 from .config import load
 from .client import BASE_URL, queue_next_job, report_progress, push_inventory, _sock, _open_evt, headers
-from .utils import download_file, sha256_of_file, get_model_path, list_model_hashes, update_cached_hash
+from .utils import download_file, sha256_of_file, get_model_path, list_model_hashes, update_cached_hash, get_http_session
 
 _cfg = load()
 MIN_FREE_MB = int(_cfg.get("min_free_mb", 2048))
@@ -26,6 +25,7 @@ KNOWN_HASHES: set[str] = set()
 _backend_ok = False
 _user_disabled = False
 RUNNING = threading.Event()
+SESSION = get_http_session()
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
@@ -109,7 +109,7 @@ def _save_preview(url: str, model_path: Path) -> str | None:
     
     try: 
         print(f"[AEC-LINK] downloading preview: {url}", flush=True) 
-        r = requests.get(url, timeout=20) 
+        r = SESSION.get(url, timeout=20) 
         r.raise_for_status() 
  
         if _HAS_PIL: 
@@ -398,7 +398,7 @@ def generate_sidecars_for_existing():
 
     try:
         request_headers = headers() or {}
-        resp = requests.post(
+        resp = SESSION.post(
             _cfg["base_url"].rstrip("/") + "/sidecars/meta",
             json={"hashes": list(model_files.keys())},
             headers=request_headers,

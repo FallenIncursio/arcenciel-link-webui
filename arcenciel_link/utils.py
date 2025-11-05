@@ -8,11 +8,34 @@ import threading
 import requests
 import logging
 
+_DEFAULT_USER_AGENT = "ArcEnCiel-Link/1.0"
+_SESSION: requests.Session | None = None
+
+
+def _resolve_user_agent() -> str:
+    override = os.getenv("ARCENCIEL_LINK_UA")
+    if override:
+        trimmed = override.strip()
+        if trimmed:
+            return trimmed
+    return _DEFAULT_USER_AGENT
+
+
+def get_http_session() -> requests.Session:
+    global _SESSION
+    if _SESSION is None:
+        session = requests.Session()
+        session.headers["User-Agent"] = _resolve_user_agent()
+        _SESSION = session
+    return _SESSION
+
+
 log = logging.getLogger("arcenciel_link")
 log.setLevel(logging.INFO)
 
 def download_file(url: str, dst: Path, progress_cb):
-    with requests.get(url, stream=True, timeout=60) as r:
+    session = get_http_session()
+    with session.get(url, stream=True, timeout=60) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
         chunk = 1024 * 1024

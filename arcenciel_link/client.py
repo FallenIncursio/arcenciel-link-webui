@@ -1,6 +1,6 @@
-import base64, json, queue, threading, time, requests, websocket, re
+import base64, json, queue, threading, time, websocket, re
 from .config import load, save
-from .utils import list_subfolders
+from .utils import list_subfolders, get_http_session
 import sys
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -44,6 +44,7 @@ def _debug(msg: str):
 
 _cfg = load()
 DEV_MODE = bool(_cfg.get("_dev_mode"))
+SESSION = get_http_session()
 
 
 def _normalise_base_url(raw: str, *, allow_insecure: bool) -> str:
@@ -575,7 +576,7 @@ def headers():
 def check_backend_health():
     global _health_state
     try:
-        r = requests.get(f"{BASE_URL}/health", headers=headers(), timeout=TIMEOUT)
+        r = SESSION.get(f"{BASE_URL}/health", headers=headers(), timeout=TIMEOUT)
         r.raise_for_status()
         if _health_state != "up":
             target = _display_target()
@@ -634,7 +635,7 @@ def report_progress(
             for k, v in [("progress", progress), ("state", state), ("message", message)]
             if v is not None
         }
-        requests.patch(
+        SESSION.patch(
             f"{BASE_URL}/queue/{job_id}/progress",
             json=payload,
             headers=headers(),
@@ -646,7 +647,7 @@ def push_inventory(hashes: list[str]):
     if _open_evt.is_set():
         _sock.send(json.dumps({"type": "inventory", "hashes": hashes}))
     else:
-        requests.post(
+        SESSION.post(
             f"{BASE_URL}/inventory",
             json={"hashes": hashes},
             headers=headers(),
@@ -736,7 +737,7 @@ def force_reconnect():
 
 
 def cancel_job(job_id: int) -> None:
-    r = requests.patch(
+    r = SESSION.patch(
         f"{BASE_URL}/queue/{job_id}/cancel", headers=headers(), timeout=TIMEOUT
     )
     r.raise_for_status()

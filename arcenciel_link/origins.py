@@ -4,6 +4,8 @@ import ipaddress
 from functools import lru_cache
 from urllib.parse import urlparse
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
 _ALLOWED_DOMAIN_SUFFIXES = (".arcenciel.io",)
 _ALLOWED_DOMAIN_NAMES = {"arcenciel.io"}
 _LOCAL_HOSTNAMES = {"localhost"}
@@ -38,6 +40,39 @@ def is_private_host(host: str | None) -> bool:
     return _is_private_host(host)
 
 
+def _port_or_default(scheme: str | None, port: int | None) -> int | None:
+    if port is not None:
+        return port
+    if not scheme:
+        return None
+    return _DEFAULT_PORTS.get(scheme.lower())
+
+
+def is_same_origin(
+    origin: str | None,
+    request_scheme: str | None,
+    request_host: str | None,
+    request_port: int | None,
+) -> bool:
+    if not origin or not request_scheme or not request_host:
+        return False
+    try:
+        parsed = urlparse(origin)
+    except ValueError:
+        return False
+    origin_host = (parsed.hostname or "").strip().lower()
+    request_host_norm = request_host.strip().lower()
+    if not origin_host or origin_host != request_host_norm:
+        return False
+    origin_scheme = (parsed.scheme or "").lower()
+    request_scheme_norm = request_scheme.lower()
+    if origin_scheme != request_scheme_norm:
+        return False
+    origin_port = _port_or_default(origin_scheme, parsed.port)
+    request_port_norm = _port_or_default(request_scheme_norm, request_port)
+    return origin_port == request_port_norm
+
+
 def normalize_origin(origin: str | None, *, allow_private: bool = False) -> str | None:
     if not origin:
         return None
@@ -59,4 +94,4 @@ def normalize_origin(origin: str | None, *, allow_private: bool = False) -> str 
     return None
 
 
-__all__ = ["normalize_origin", "is_private_host"]
+__all__ = ["normalize_origin", "is_private_host", "is_same_origin"]

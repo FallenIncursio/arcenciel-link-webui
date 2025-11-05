@@ -11,7 +11,7 @@ from .utils import list_subfolders
 
 from . import client
 from .config import load as load_config
-from .origins import normalize_origin, is_private_host
+from .origins import normalize_origin, is_private_host, is_same_origin
 
 _CFG = load_config()
 _DEV_MODE = bool(_CFG.get("_dev_mode"))
@@ -32,14 +32,21 @@ class ToggleLinkPayload(BaseModel):
 
 router = APIRouter(prefix="/arcenciel-link")
 
-def _normalize_origin(origin: str) -> str | None:
+def _normalize_origin(origin: str, request: Request) -> str | None:
+    if is_same_origin(
+        origin,
+        request.url.scheme,
+        request.url.hostname,
+        request.url.port,
+    ):
+        return f"{request.url.scheme}://{request.url.netloc}"
     return normalize_origin(origin, allow_private=_DEV_MODE)
 
 
 def _require_allowed_origin(request: Request) -> str | None:
     origin = request.headers.get("origin")
     if origin:
-        normalized = _normalize_origin(origin)
+        normalized = _normalize_origin(origin, request)
         if normalized:
             return normalized
         raise HTTPException(status_code=403, detail="Origin not allowed")

@@ -1,13 +1,43 @@
 import json, os
+import warnings
 from pathlib import Path
 
-from .secure_store import (
-    get_secret,
-    is_secure_storage_available,
-    migrate_legacy_secret,
-    sanitize_legacy_secret,
-    set_secret,
-)
+try:
+    from .secure_store import (
+        get_secret,
+        is_secure_storage_available,
+        migrate_legacy_secret,
+        sanitize_legacy_secret,
+        set_secret,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover
+    missing = getattr(exc, "name", None)
+    if missing and missing != "arcenciel_link.secure_store":
+        raise
+
+    warnings.warn(
+        "[arcenciel-link] secure_store module missing; secrets will remain in config.json",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+    def is_secure_storage_available() -> bool:
+        return False
+
+    def get_secret(key: str) -> str | None:
+        return None
+
+    def set_secret(key: str, value: str | None) -> None:
+        return None
+
+    def sanitize_legacy_secret(value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
+
+    def migrate_legacy_secret(key: str, value: str | None) -> None:
+        return None
 
 _CFG = Path(__file__).parent / "config.json"
 _DEFAULT = {

@@ -10,8 +10,8 @@ from urllib.parse import urlparse, unquote
 
 import requests
 from .config import load
-from .client import BASE_URL, queue_next_job, report_progress, push_inventory, _sock, _open_evt
-from .utils import download_file, sha256_of_file, get_model_path, list_model_hashes
+from .client import BASE_URL, queue_next_job, report_progress, push_inventory, _sock, _open_evt, headers
+from .utils import download_file, sha256_of_file, get_model_path, list_model_hashes, update_cached_hash
 
 _cfg = load()
 MIN_FREE_MB = int(_cfg.get("min_free_mb", 2048))
@@ -19,6 +19,8 @@ MAX_RETRIES = int(_cfg.get("max_retries", 5))
 BACKOFF_BASE = int(_cfg.get("backoff_base", 2))
 
 SLEEP_AFTER_ERROR = 5
+PROGRESS_MIN_STEP = 2
+PROGRESS_MIN_INTERVAL = 1.5
 KNOWN_HASHES: set[str] = set()
 
 _backend_ok = False
@@ -66,15 +68,24 @@ def _enough_free_space(path: Path, min_mb: int = MIN_FREE_MB) -> bool:
 
 def _print_progress(label: str, pct: int | None = None, last=[-1]):
     if pct is None:
-        print(f"[AEC-LINK] ✅ {label} – download finished", file=sys.stderr)
+        print(f"[AEC-LINK] download finished: {label}", file=sys.stderr)
         return
-    if pct - last[0] >= 10:
-        print(f"[AEC-LINK] …{label} {pct:3d} %", file=sys.stderr, end="\r")
+    if pct - last[0] >= 10 or pct in (0, 100):
+        print(f"[AEC-LINK] downloading {label}: {pct:3d}%", file=sys.stderr, end="\r")
         last[0] = pct
+
 
 
 def _already_have(hash_: str | None) -> bool:
     return hash_ in KNOWN_HASHES if hash_ else False
+
+def _sync_inventory(hashes: list[str]) -> None:
+    unique_count = len(KNOWN_HASHES)
+    if len(hashes) == unique_count and KNOWN_HASHES.issuperset(hashes):
+        return
+    KNOWN_HASHES.clear()
+    KNOWN_HASHES.update(hashes)
+    push_inventory(hashes)
 
 
 def _download_with_retry(url: str, tmp: Path, progress_cb):
@@ -97,7 +108,7 @@ def _save_preview(url: str, model_path: Path) -> str | None:
         preview_file = _unique_filename(preview_file.parent, preview_file.stem + ".png")
     
     try: 
-        print(f"[AEC-LINK] ↓ preview {url}", flush=True) 
+        print(f"[AEC-LINK] downloading preview: {url}", flush=True) 
         r = requests.get(url, timeout=20) 
         r.raise_for_status() 
  
@@ -107,10 +118,10 @@ def _save_preview(url: str, model_path: Path) -> str | None:
         else: 
             with open(preview_file, "wb") as f: 
                 f.write(r.content)
-        print(f"[AEC-LINK] ✅ preview saved as {preview_file}", flush=True) 
+        print(f"[AEC-LINK] preview saved as {preview_file}", flush=True) 
         return preview_file.name 
     except Exception as e: 
-        print(f"[AEC-LINK] ⚠️  preview download failed – {e}", flush=True) 
+        print(f"[AEC-LINK] preview download failed: {e}", flush=True) 
         return None
     
 
@@ -196,11 +207,11 @@ def _worker():
                 continue
 
             if not _backend_ok:
-                print("[AEC-LINK] 🟢  connected")
+                print("[AEC-LINK] connected")
             _backend_ok = True 
         except Exception as e: 
             if _backend_ok:
-                print("[AEC-LINK] 🔴  disconnected") 
+                print("[AEC-LINK] disconnected") 
             _backend_ok = False 
             time.sleep(SLEEP_AFTER_ERROR) 
             continue
@@ -222,15 +233,18 @@ def _worker():
             url_path  = unquote(urlparse(url_raw).path)
 
             sha_server = ver.get("sha256")
-            dst_path = get_model_path(job["targetPath"]) / Path(url_path).name
-
-            dst_dir = get_model_path(job["targetPath"]) 
+            try: 
+                dst_dir = get_model_path(job["targetPath"]) 
+            except ValueError as exc: 
+                report_progress(job["id"], state="ERROR", message=str(exc)) 
+                continue 
             dst_dir.mkdir(parents=True, exist_ok=True) 
+            dst_path = dst_dir / Path(url_path).name
  
             raw_name = Path(url_path).name          # 6588bcd7_foo.safetensors 
             clean_name  = _clean(raw_name)        # foo.safetensors 
  
-            # »foo.safetensors«, »foo_1.safetensors«, »foo_2…« 
+            #  foo.safetensors ,  foo_1.safetensors ,  foo_2   
             dst_path = _unique_filename(dst_dir, clean_name)
 
             dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,13 +262,21 @@ def _worker():
 
             label = dst_path.name
 
-            # download ↓ tmp
+            # download   tmp
             tmp_path = dst_path.with_suffix(".part")                
             report_progress(job["id"], state="DOWNLOADING", progress=0)
             _print_progress(label, 0)
+            last_progress = {"pct": 0, "ts": time.monotonic()}
 
             def _progress_cb(frac: float):
-                pct = int(frac * 100)
+                pct = max(0, min(100, int(frac * 100)))
+                now = time.monotonic()
+                delta = pct - last_progress["pct"]
+                elapsed = now - last_progress["ts"]
+                if pct not in (0, 100) and delta < PROGRESS_MIN_STEP and elapsed < PROGRESS_MIN_INTERVAL:
+                    return
+                last_progress["pct"] = pct
+                last_progress["ts"] = now
                 report_progress(job["id"], progress=pct)
                 _print_progress(label, pct)
 
@@ -275,16 +297,13 @@ def _worker():
                 _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
 
             # done
-            hashes = list_model_hashes()
-            KNOWN_HASHES.clear(); 
-            KNOWN_HASHES.update(hashes) 
-            
-            push_inventory(hashes)
+            hashes = update_cached_hash(dst_path, sha_local)
+            _sync_inventory(hashes)
             report_progress(job["id"], state="DONE", progress=100)
             _print_progress(label)
 
         except Exception as e: 
-            print(f"[AEC-LINK] ❌ worker error – {e}") 
+            print(f"[AEC-LINK] worker error: {e}") 
             report_progress(job["id"], state="ERROR", message=str(e)) 
             time.sleep(SLEEP_AFTER_ERROR)
 
@@ -296,41 +315,74 @@ def toggle_worker(enable: bool):
         _user_disabled = False 
         RUNNING.set() 
         _backend_ok = True
-        print("[AEC-LINK] ▶️  worker ENABLED", flush=True) 
+        print("[AEC-LINK] worker ENABLED", flush=True) 
 
     elif not enable and RUNNING.is_set():
         _user_disabled = True 
         RUNNING.clear() 
         _backend_ok = False
-        print("[AEC-LINK] ⏹  worker DISABLED by user", flush=True) 
+        print("[AEC-LINK] worker DISABLED by user", flush=True) 
 
 
 def start_worker():
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def _inventory_loop():
+def _inventory_watch_dirs() -> set[Path]:
+    candidates = {
+        "models/Stable-diffusion",
+        "models/Lora",
+        "models/VAE",
+        "embeddings",
+    }
+    paths: set[Path] = set()
+    for target in candidates:
+        try:
+            paths.add(get_model_path(target))
+        except ValueError:
+            continue
+    return paths
+
+
+def _inventory_signature() -> tuple[tuple[str, int], ...]:
+    signature: list[tuple[str, int]] = []
+    for root in _inventory_watch_dirs():
+        try:
+            stat = root.stat()
+            newest = getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))
+            try:
+                for child in root.iterdir():
+                    try:
+                        child_stat = child.stat()
+                    except (FileNotFoundError, PermissionError):
+                        continue
+                    child_mtime = getattr(child_stat, "st_mtime_ns", int(child_stat.st_mtime * 1_000_000_000))
+                    if child_mtime > newest:
+                        newest = child_mtime
+            except (FileNotFoundError, PermissionError):
+                pass
+            signature.append((str(root), int(newest)))
+        except FileNotFoundError:
+            signature.append((str(root), 0))
+    return tuple(sorted(signature))
+
+
+def _inventory_worker():
+    last_signature: tuple[tuple[str, int], ...] | None = None
     while True:
         try:
-            hashes = list_model_hashes()
-            KNOWN_HASHES.clear()
-            KNOWN_HASHES.update(hashes)
-
-            push_inventory(hashes)
+            signature = _inventory_signature()
+            if signature != last_signature:
+                hashes = list_model_hashes()
+                _sync_inventory(hashes)
+                last_signature = signature
         except Exception:
             pass
         time.sleep(3600)
 
 
 def schedule_inventory_push():
-    try:
-        hashes = list_model_hashes()
-        KNOWN_HASHES.update(hashes)
-        push_inventory(hashes)
-    except Exception:
-        pass
-
-    threading.Thread(target=_inventory_loop, daemon=True).start()
+    threading.Thread(target=_inventory_worker, daemon=True).start()
 
 
 start_worker()
@@ -345,10 +397,11 @@ def generate_sidecars_for_existing():
         return
 
     try:
+        request_headers = headers() or {}
         resp = requests.post(
             _cfg["base_url"].rstrip("/") + "/sidecars/meta",
             json={"hashes": list(model_files.keys())},
-            headers={"x-api-key": _cfg["api_key"]},
+            headers=request_headers,
             timeout=30,
         )
         resp.raise_for_status()
@@ -366,8 +419,9 @@ def generate_sidecars_for_existing():
         if (dst_path.with_suffix(".arcenciel.info")).exists():
             continue
 
-        print(f"[AEC-LINK] ✍  sidecars for {dst_path.name}")
+        print(f"[AEC-LINK] sidecars for {dst_path.name}")
         preview = _save_preview(meta.get("preview"), dst_path)
         _write_info_json(meta, h, preview, dst_path)
         if _cfg.get("save_html_preview"):
             _write_html(meta | {"sha256": h}, preview, dst_path)
+

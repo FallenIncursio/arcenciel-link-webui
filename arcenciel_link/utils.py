@@ -3,6 +3,7 @@ import hashlib, json, os, glob
 from pathlib import Path
 from typing import List, Dict, Generator, Set
 import shlex, argparse
+import threading
 
 import requests
 import logging
@@ -33,6 +34,8 @@ def sha256_of_file(p: Path) -> str:
 
 CACHE_DIR  = Path(__file__).parent.parent / "cache"
 CACHE_FILE = CACHE_DIR / "hashes.json"
+_CACHE_LOCK = threading.Lock()
+_CACHE_DATA: Dict[str, Dict] | None = None
 
 MODEL_EXTS = {".safetensors", ".ckpt", ".pt"}
 
@@ -106,6 +109,14 @@ def _load_cache() -> Dict[str, Dict]:
 def _save_cache(data: Dict):
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_FILE.write_text(json.dumps(data, indent=2))
+    global _CACHE_DATA
+    _CACHE_DATA = data
+
+def _ensure_cache() -> Dict[str, Dict]:
+    global _CACHE_DATA
+    if _CACHE_DATA is None:
+        _CACHE_DATA = _load_cache()
+    return _CACHE_DATA
 
 
 def _iter_model_files(root: Path) -> Generator[Path, None, None]:
@@ -118,43 +129,67 @@ def _iter_model_files(root: Path) -> Generator[Path, None, None]:
 
 
 def list_model_hashes() -> List[str]:
-    KNOWN_HASHES.clear()
     from .config import load
-    webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
-    cfg = load()
-    if cfg.get("webui_root"):
-        webui_root = Path(cfg["webui_root"])
 
-    cache = _load_cache()
-    updated = False
-    result = []
+    with _CACHE_LOCK:
+        cache = _ensure_cache()
+        KNOWN_HASHES.clear()
+        webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
+        cfg = load()
+        if cfg.get("webui_root"):
+            webui_root = Path(cfg["webui_root"])
 
-    for p in _iter_model_files(webui_root):
-        mtime = int(p.stat().st_mtime)
-        key = str(p)
-        entry = cache.get(key)
+        updated = False
+        result: List[str] = []
 
-        if entry and entry["mtime"] == mtime:
-            h = entry["hash"]
-        else:
-            log.info("hashing %s", p)
-            h = sha256_of_file(p)
-            cache[key] = {"mtime": mtime, "hash": h}
+        for p in _iter_model_files(webui_root):
+            mtime = int(p.stat().st_mtime)
+            key = str(p.resolve())
+            entry = cache.get(key)
+
+            if entry and entry.get("mtime") == mtime:
+                h = entry.get("hash")
+            else:
+                log.info("hashing %s", p)
+                h = sha256_of_file(p)
+                cache[key] = {"mtime": mtime, "hash": h}
+                updated = True
+
+            if h:
+                result.append(h)
+
+        orphan_keys = [k for k in cache if not Path(k).exists()]
+        for k in orphan_keys:
+            del cache[k]
             updated = True
 
-        result.append(h)
+        if updated:
+            _save_cache(cache)
 
-    orphan_keys = [k for k in cache if not Path(k).exists()]
-    for k in orphan_keys:
-        del cache[k]
-        updated = True
+        KNOWN_HASHES.update(result)
+        return result
 
-    if updated:
+def update_cached_hash(path: Path, hash_value: str) -> List[str]:
+    resolved = path.resolve()
+    with _CACHE_LOCK:
+        cache = _ensure_cache()
+        try:
+            mtime = int(resolved.stat().st_mtime)
+        except FileNotFoundError:
+            return list_model_hashes()
+
+        cache[str(resolved)] = {"mtime": mtime, "hash": hash_value}
         _save_cache(cache)
 
-    KNOWN_HASHES.update(result)
+        hashes = []
+        for entry in cache.values():
+            h = entry.get("hash")
+            if h:
+                hashes.append(h)
 
-    return result
+        KNOWN_HASHES.clear()
+        KNOWN_HASHES.update(hashes)
+        return hashes
 
 
 def _cmd_opts() -> Dict[str, str | None]:
@@ -188,15 +223,34 @@ def get_model_path(target: str) -> Path:
     opts = _cmd_opts()
 
     mapping = {
-        "models/Stable-diffusion": opts["ckpt_dir"] or root / "models/Stable-diffusion",
-        "models/Lora": opts["lora_dir"] or root / "models/Lora",
-        "models/VAE": opts["vae_dir"] or root / "models/VAE",
-        "embeddings": opts["embeddings_dir"] or root / "embeddings",
+        "models/Stable-diffusion": Path(opts["ckpt_dir"]) if opts["ckpt_dir"] else root / "models/Stable-diffusion",
+        "models/Checkpoint": Path(opts["ckpt_dir"]) if opts["ckpt_dir"] else root / "models/Stable-diffusion",
+        "models/Lora": Path(opts["lora_dir"]) if opts["lora_dir"] else root / "models/Lora",
+        "models/VAE": Path(opts["vae_dir"]) if opts["vae_dir"] else root / "models/VAE",
+        "models/Vae": Path(opts["vae_dir"]) if opts["vae_dir"] else root / "models/VAE",
+        "models/Emb": Path(opts["embeddings_dir"]) if opts["embeddings_dir"] else root / "embeddings",
+        "embeddings": Path(opts["embeddings_dir"]) if opts["embeddings_dir"] else root / "embeddings",
     }
 
-    for prefix, real_dir in mapping.items():
-        if target.startswith(prefix):
-            tail = target[len(prefix):].lstrip("/\\")
-            return Path(real_dir) / tail if tail else Path(real_dir)
+    normalised = str(target or "").replace("\\", "/").lstrip("/")
+    if not normalised:
+        raise ValueError("Invalid target path")
+    lowered = normalised.lower()
 
-    return root / target
+    for prefix, real_dir in mapping.items():
+        pref_norm = prefix.replace("\\", "/")
+        pref_lower = pref_norm.lower()
+        if lowered == pref_lower or lowered.startswith(pref_lower + "/"):
+            tail = normalised[len(pref_norm):].lstrip("/\\")
+            base = Path(real_dir).resolve()
+            candidate = base if not tail else (base / Path(tail))
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(base)
+            except ValueError as exc:
+                raise ValueError("Target path escapes allowed directories") from exc
+            if any(part in ("..", ".") for part in resolved.parts[len(base.parts):]):
+                raise ValueError("Target path contains traversal segments")
+            return resolved
+
+    raise ValueError("Unsupported target path")

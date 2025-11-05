@@ -1,4 +1,3 @@
-from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware import Middleware
 from modules import script_callbacks
 
@@ -19,7 +18,7 @@ def _mount_api(*args, **kwargs):
     if not any(m.cls is PrivateNetworkMiddleware for m in app.user_middleware): 
         try: 
             app.add_middleware(PrivateNetworkMiddleware) 
-            print("[AEC-LINK] ✅ PNA middleware added") 
+            print("[AEC-LINK] PNA middleware added") 
         except RuntimeError: 
             try: 
                 app.user_middleware.insert( 
@@ -27,40 +26,13 @@ def _mount_api(*args, **kwargs):
                     Middleware(PrivateNetworkMiddleware), 
                 ) 
                 app.middleware_stack = app.build_middleware_stack() 
-                print("[AEC-LINK] ✅ PNA middleware injected late") 
+                print("[AEC-LINK] PNA middleware injected late") 
             except Exception as e: 
-                print("[AEC-LINK] ❌ late PNA injection failed –", e)
-
-    if not any(isinstance(m, CORSMiddleware) for m in app.user_middleware):
-        try:
-            app.add_middleware(
-                CORSMiddleware,
-                allow_origins=["*"],
-                allow_methods=["*"],
-                allow_headers=["*"],
-            )
-            print("[AEC-LINK] ✅ CORS middleware added")
-        except RuntimeError:
-            print("[AEC-LINK] ⚠️  CORS middleware could not be added "
-                  "– FastAPI already running, trying late injection …")
-            try:
-                app.user_middleware.insert(
-                    0,
-                    Middleware(
-                        CORSMiddleware,
-                        allow_origins=["*"],
-                        allow_methods=["*"],
-                        allow_headers=["*"],
-                    ),
-                )
-                app.middleware_stack = app.build_middleware_stack()
-                print("[AEC-LINK] ✅ CORS middleware injected late")
-            except Exception as e:
-                print("[AEC-LINK] ❌ late CORS injection failed –", e)
+                print("[AEC-LINK] late PNA injection failed", e)
 
     if not any(r.path.startswith("/arcenciel-link/") for r in app.router.routes):
         app.include_router(_api_router)
-        print("[AEC-LINK] ✅ API router mounted")
+        print("[AEC-LINK] API router mounted")
 
 
 if hasattr(script_callbacks, "on_app_created"):
@@ -75,6 +47,7 @@ if _cfg.get("save_html_preview", False):
     try:
         import arcenciel_link.extra_preview  # noqa: F401
     except Exception as e:
-        print("[AEC-LINK] ⚠️  extra_preview not loaded –", e)
+        print("[AEC-LINK] extra_preview not loaded", e)
 else:
-    print("[AEC-LINK] ℹ️  HTML preview disabled")
+    print("[AEC-LINK] HTML preview disabled")
+

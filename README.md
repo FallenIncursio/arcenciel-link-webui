@@ -1,18 +1,29 @@
-# Arc en Ciel Link — AUTOMATIC1111 Extension
+# Arc en Ciel Link - AUTOMATIC1111 Extension
 
-> Bring your Arc en Ciel models straight into Stable Diffusion WebUI with one click — now with secure link keys, remote worker controls, inventory sync, and a built-in progress UI.
+> Bring your Arc en Ciel models straight into Stable Diffusion WebUI with one click - with Link Key auth, remote worker controls, inventory sync, and local sidecar generation.
+
+---
+
+## Release Notes (latest)
+
+- Updated onboarding to a **Connect-first** flow: with the extension installed and local UI running, open ArcEnCiel Link panel on [arcenciel.io](https://arcenciel.io) and click **Connect**.
+- Documented auto-detect behavior for local endpoints: `127.0.0.1` / `localhost` on ports `7860`, `7861`, `7801`, `8000`, `8501`.
+- Added explicit **Custom endpoint** fallback guidance for non-standard host/port setups.
+- Corrected queue/progress wording: status is shown in the **ArcEnCiel Link panel** and local worker logs.
+- Updated credential messaging: **Link Key (`lk_...`) is primary**; **API key is legacy/deprecated** for current websocket flow.
+- Replaced outdated setup/video references and aligned troubleshooting with current Connect + endpoint flow.
 
 ---
 
 ## ✨ Features
 
-- One-click **➕ Download** on every Arc en Ciel model card — no manual copy-paste.
-- **Model-aware routing** → checkpoints, LoRAs, VAEs, and embeddings land in the correct folder automatically.
-- Background worker with **retry back-off**, **disk-space guard**, **SHA-256 verification**, and a live console feed.
-- Remote worker control keeps the queue synced and lets the dashboard push jobs, credentials, and folder picks.
-- Secrets are stored in the OS keyring when available; config.json only keeps plain text if no keyring backend exists.
-- Optional preview PNG, `.arcenciel.info` metadata, and HTML quick-view sidecars saved next to every model.
-- Console status icons (🔴 not linked / 🔵 downloading / 🟢 done) for quick at-a-glance feedback.
+- One-click **➕ Download** on Arc en Ciel model cards.
+- **Model-aware routing** for checkpoints, LoRAs, VAEs, and embeddings.
+- Background worker with retry back-off, disk-space guard, SHA-256 verification, and live console logs.
+- Remote worker control from the ArcEnCiel Link panel (website) through the local bridge endpoint.
+- Hourly inventory sync so duplicates are skipped when hashes already exist locally.
+- Optional sidecars next to downloaded models (`.preview.png`, `.arcenciel.info`, optional `.html`).
+- Secrets stored in the OS keyring when available; `config.json` fallback when no secure backend exists.
 
 ---
 
@@ -21,15 +32,15 @@
 ### Fast way (GUI)
 
 1. Open Stable Diffusion WebUI.
-2. `Extensions → Install from URL`.
-3. Paste the repo URL:
+2. Go to `Extensions -> Install from URL`.
+3. Paste:
 
    ```bash
    https://github.com/FallenIncursio/arcenciel-link-webui.git
    ```
 
 4. Click Install, then restart WebUI.
-5. A new ArcEnCiel section appears under WebUI Settings.
+5. The ArcEnCiel settings section appears in WebUI.
 
 ### Manual / dev install
 
@@ -42,75 +53,80 @@ pip install -r arcenciel-link-webui/requirements.txt
 
 ---
 
-## 🔑 First-time setup
+## 🔑 First-time setup (Connect-first)
 
-1. On arcenciel.io open **Link Access** and create a Link Key (`lk_...`). API keys remain a legacy fallback.
-2. In WebUI go to **Settings → ArcEnCiel**, paste the Link Key (or API key).
-3. Click Save.
+1. Install/update the extension and make sure WebUI is running.
+2. On [arcenciel.io](https://arcenciel.io) open the **ArcEnCiel Link panel**, create or select a **Link Key (`lk_...`)**, then click **Connect**.
+3. If only one local endpoint is detected, ArcEnCiel assigns it and enables the worker automatically.
+4. If WebUI runs on a non-standard host/port, use **Find WebUIs** and select an endpoint (or **Custom...**).
+5. Fallback: set credentials manually in WebUI `Settings -> ArcEnCiel`.
 
 ---
 
 ## 🛡️ Credentials and security
 
-- Link Keys are the preferred credential. They can be rotated or revoked per worker from the Arc en Ciel dashboard.
-- API keys still work, but only Link Keys unlock remote worker toggles and folder selection.
-- At startup the extension migrates existing credentials into the OS keyring (`keyring` package). If no backend is available, the secrets remain in `arcenciel_link/config.json`.
-- Environment variables override file and UI settings:
-  - `ARCENCIEL_LINK_URL` — base API URL.
-  - `ARCENCIEL_LINK_KEY` — Link Key (`lk_...`).
-  - `ARCENCIEL_API_KEY` — legacy API key.
-  - `ARCENCIEL_DEV` — allow HTTP endpoints and private origins for testing.
-- Delete the keyring entry named `arcenciel-link` to revoke cached credentials on the machine.
+- **Link Key (`lk_...`) is the primary credential** for current ArcEnCiel worker websocket auth.
+- API key fields remain for legacy/self-hosted compatibility, but Link Keys are recommended for all active setups.
+- At startup, existing credentials are migrated into the OS keyring (`keyring` package) when available.
+- If no keyring backend exists, secrets remain in `arcenciel_link/config.json`.
+- Environment variables override file/UI settings:
+  - `ARCENCIEL_LINK_URL` - base API URL.
+  - `ARCENCIEL_LINK_KEY` - Link Key (`lk_...`).
+  - `ARCENCIEL_API_KEY` - API key (legacy).
+  - `ARCENCIEL_DEV` - allow HTTP endpoints and private origins for testing.
+- Delete the `arcenciel-link` keyring entry to revoke cached credentials on the machine.
 
 ---
 
 ## 🚀 How to use
 
-- Press Download on any Arc en Ciel model card; the job appears in the ArcEnCiel Link queue in WebUI.
-- The worker logs every step with colored progress messages and retries up to five times with exponential back-off. It pauses automatically if less than 2 GB free space remain.
-- Inventory sync runs hourly and the dashboard skips anything you already have locally.
-- When a Link Key is active, the dashboard can toggle the worker, inject new credentials, and pick destination folders via the private network-aware API.
+- Press Download on any Arc en Ciel model card.
+- Queue/progress state is visible in the ArcEnCiel Link panel and in local WebUI worker console logs.
+- The worker retries failed downloads with exponential back-off and pauses below `min_free_mb`.
+- Inventory sync runs hourly and the backend skips models already installed locally.
+- With Link Keys, the dashboard can remotely toggle the worker, push credentials, and request folder lists.
 
 ### 🖼 Optional cover / metadata
 
-If provided by the server the extension saves:
+When provided by the backend, the extension saves:
 
 ```text
 model.safetensors
 model.preview.png
 model.arcenciel.info   # compact JSON
-model.html             # WebUI-friendly quick view (disabled by default)
+model.html             # optional quick-view (disabled by default)
 ```
 
-Enable HTML quick-views by setting `"save_html_preview": true` in `arcenciel_link/config.json` (or via the settings JSON after the first run).
+Enable HTML quick-views with `"save_html_preview": true` in `arcenciel_link/config.json`.
 
 ---
 
 ## ⚙️ Advanced configuration
 
 - `webui_root`, `min_free_mb`, `max_retries`, and `backoff_base` live in `arcenciel_link/config.json`.
-- Passing `--dev` to WebUI or exporting `ARCENCIEL_DEV=1` allows HTTP endpoints (for example `http://localhost:3000/api/link`) and private network dashboards while testing.
-- Additional folder overrides can be supplied through WebUI command-line arguments such as `--ckpt-dir` or `--lora-dir`; the worker honors them automatically.
+- Passing `--dev` to WebUI or setting `ARCENCIEL_DEV=1` enables HTTP endpoints (for example `http://localhost:3000/api/link`) and private origins for testing.
+- Folder overrides from WebUI args (`--ckpt-dir`, `--lora-dir`, etc.) are honored automatically.
 
 ---
 
 ## 📹 Video tutorial
 
-https://github.com/user-attachments/assets/7c0557d6-6ec6-40d4-b186-cd1e51f61cae
+Updated walkthrough video: coming soon (previous video has been retired).
 
 ---
 
 ## 🆘 Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| Worker stays offline | Ensure the Link Key or API key is saved, then click Enable. Check the console for `[AEC-LINK] authentication failed` or scope warnings. |
-| Browser reports private network blocked | Accept the Private Network Access prompt or add the origin (`https://arcenciel.io`) to your browser's allowed list. |
-| Remote toggle does nothing | Verify the worker console shows `Access-Control-Allow-Private-Network: true`; re-save settings to refresh credentials. |
-| Download stuck at 0% | Check free disk space and write permissions; the worker aborts below the configured `min_free_mb`. |
-| Repeated `SHA256 mismatch` | Network issues or corrupted mirrors; the worker retries automatically. Contact Arc en Ciel with the model/version ID if it persists. |
-| Need more diagnostics | Inspect `arcenciel_link/client-debug.log` for websocket events and control messages. |
-| Sidecars missing | Ensure you are on the latest backend and that the model payload includes preview/meta data. |
+| Symptom                                            | Fix                                                                                                                                                                                                        |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker stays offline                               | Use a valid Link Key (`lk_...`) and click Connect in the ArcEnCiel Link panel. Check WebUI logs for `[AEC-LINK] authentication failed` or scope errors.                                                    |
+| Connect only works after manual endpoint selection | ArcEnCiel auto-detect scans `127.0.0.1` and `localhost` on ports `7860`, `7861`, `7801`, `8000`, `8501`. For custom host/port, assign the endpoint manually via **Custom...** in the ArcEnCiel Link panel. |
+| Browser reports private network blocked            | Accept the Private Network Access prompt or allow origin `https://arcenciel.io` in browser/network policy.                                                                                                 |
+| Remote toggle does nothing                         | Confirm the local bridge returns `Access-Control-Allow-Private-Network: true` and that WebUI is still running.                                                                                             |
+| Download stuck at 0%                               | Check free disk space and write permissions; the worker aborts below configured `min_free_mb`.                                                                                                             |
+| Repeated `SHA256 mismatch`                         | Usually unstable mirrors/network. Worker retries automatically; contact Arc en Ciel if persistent for one model/version.                                                                                   |
+| API key no longer connects worker                  | API keys are legacy. For current ArcEnCiel websocket auth, use a Link Key.                                                                                                                                 |
+| Need more diagnostics                              | Inspect `arcenciel_link/client-debug.log` for websocket/control details.                                                                                                                                   |
 
 ---
 

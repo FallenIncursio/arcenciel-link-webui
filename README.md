@@ -20,8 +20,6 @@
 - One-click **➕ Download** on Arc en Ciel model cards.
 - **Model-aware routing** for checkpoints, LoRAs, VAEs, and embeddings.
 - Background worker with retry back-off, disk-space guard, SHA-256 verification, and live console logs.
-- Supporter Early Access downloads use short-lived, job-scoped grants that are never placed in URLs.
-- This release advertises `link_download_grant_v1`; older clients keep receiving public jobs but cannot claim private pre-release jobs.
 - Remote worker control from the ArcEnCiel Link panel (website) through the local bridge endpoint.
 - Hourly inventory sync so duplicates are skipped when hashes already exist locally.
 - Optional sidecars next to downloaded models (`.preview.png`, `.arcenciel.info`, optional `.html`).
@@ -68,7 +66,6 @@ pip install -r arcenciel-link-webui/requirements.txt
 ## 🛡️ Credentials and security
 
 - **Link Key (`lk_...`) is the primary credential** for current ArcEnCiel worker websocket auth.
-- Early Access grants are received only by the worker, sent in a dedicated request header, and rejected on redirects so they cannot leak to another download host.
 - API key fields remain for legacy/self-hosted compatibility, but Link Keys are recommended for all active setups.
 - At startup, existing credentials are migrated into the OS keyring (`keyring` package) when available.
 - If no keyring backend exists, secrets remain in `arcenciel_link/config.json`.

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64, json, queue, threading, time, websocket, re
 from .config import load, save
 from .utils import list_subfolders, get_http_session
@@ -212,7 +214,13 @@ def _send_ws_payload(payload: dict, *, default_type: str | None = None):
 def _send_worker_state(running: bool | None = None):
     if running is None:
         running = _is_worker_running()
-    _send_ws_payload({"type": "worker_state", "running": bool(running)})
+    _send_ws_payload(
+        {
+            "type": "worker_state",
+            "running": bool(running),
+            "capabilities": ["link_download_grant_v1"],
+        }
+    )
 
 
 def _send_control_ack(payload: dict):

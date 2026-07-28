@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import hashlib, json, os, glob
 from pathlib import Path
 from typing import List, Dict, Generator, Set
@@ -33,9 +34,21 @@ def get_http_session() -> requests.Session:
 log = logging.getLogger("arcenciel_link")
 log.setLevel(logging.INFO)
 
-def download_file(url: str, dst: Path, progress_cb):
+def download_file(
+    url: str,
+    dst: Path,
+    progress_cb,
+    *,
+    request_headers: Dict[str, str] | None = None,
+):
     session = get_http_session()
-    with session.get(url, stream=True, timeout=60) as r:
+    with session.get(
+        url,
+        stream=True,
+        timeout=60,
+        headers=request_headers,
+        allow_redirects=request_headers is None,
+    ) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
         chunk = 1024 * 1024

@@ -88,10 +88,51 @@ def _sync_inventory(hashes: list[str]) -> None:
     push_inventory(hashes)
 
 
-def _download_with_retry(url: str, tmp: Path, progress_cb):
+_LINK_GRANT_HEADER = "X-ArcEnCiel-Link-Grant"
+_LINK_GRANT_PATH = re.compile(r"^/api/link/queue/\d+/download(?:/|$)")
+
+
+def _grant_headers_for_job(job: dict, download_url: str) -> dict[str, str] | None:
+    raw_grant = job.get("downloadGrant")
+    if raw_grant is None:
+        return None
+    if not isinstance(raw_grant, str) or not raw_grant.strip() or len(raw_grant) > 4096:
+        raise RuntimeError("Invalid Link download grant")
+
+    parsed = urlparse(download_url)
+    hostname = (parsed.hostname or "").lower()
+    official_host = hostname == "arcenciel.io" or hostname.endswith(".arcenciel.io")
+    local_dev_host = bool(_cfg.get("_dev_mode")) and hostname in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
+    secure_transport = parsed.scheme == "https" or (
+        local_dev_host and parsed.scheme == "http"
+    )
+    if not (official_host or local_dev_host) or not secure_transport:
+        raise RuntimeError("Link download grant URL is not trusted")
+    if not _LINK_GRANT_PATH.match(parsed.path):
+        raise RuntimeError("Link download grant URL has an invalid path")
+
+    return {_LINK_GRANT_HEADER: raw_grant.strip()}
+
+
+def _download_with_retry(
+    url: str,
+    tmp: Path,
+    progress_cb,
+    *,
+    request_headers: dict[str, str] | None = None,
+):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            download_file(url, tmp, progress_cb)
+            download_file(
+                url,
+                tmp,
+                progress_cb,
+                request_headers=request_headers,
+            )
             return
         except Exception as e:
             tmp.unlink(missing_ok=True)
@@ -230,6 +271,7 @@ def _worker():
             if not url_raw:
                 raise RuntimeError("No download URL provided by server")
 
+            grant_headers = _grant_headers_for_job(job, url_raw)
             url_path  = unquote(urlparse(url_raw).path)
 
             sha_server = ver.get("sha256")
@@ -280,7 +322,12 @@ def _worker():
                 report_progress(job["id"], progress=pct)
                 _print_progress(label, pct)
 
-            _download_with_retry(url_raw, tmp_path, _progress_cb)
+            _download_with_retry(
+                url_raw,
+                tmp_path,
+                _progress_cb,
+                request_headers=grant_headers,
+            )
 
             # hash
             sha_local = sha256_of_file(tmp_path)
@@ -424,4 +471,3 @@ def generate_sidecars_for_existing():
         _write_info_json(meta, h, preview, dst_path)
         if _cfg.get("save_html_preview"):
             _write_html(meta | {"sha256": h}, preview, dst_path)
-

@@ -112,6 +112,16 @@ def test_config_removes_retired_credentials_and_writes_private_file(monkeypatch,
     assert config_file.stat().st_mode & 0o777 == 0o600
 
 
+def test_default_browser_bridge_stays_enabled(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(config, "_CFG", config_file)
+    monkeypatch.setattr(config, "is_secure_storage_available", lambda: False)
+    monkeypatch.setattr(config, "get_secret", lambda _key: None)
+    monkeypatch.setattr(config, "migrate_legacy_secret", lambda _key, _value: None)
+
+    assert config.load()["bridge_port"] == 8501
+
+
 def test_plural_forge_directories_are_discovered(monkeypatch, tmp_path):
     checkpoint_dir = tmp_path / "checkpoints"
     checkpoint_dir.mkdir()

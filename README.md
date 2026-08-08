@@ -8,7 +8,7 @@ ArcEnCiel Link sends one-click model downloads from [arcenciel.io](https://arcen
 - Private downloads use a short-lived header grant bound to the configured ArcEnCiel HTTPS origin; redirects are refused.
 - Worker enablement survives WebUI restarts.
 - Checkpoint, LoRA, VAE, embedding, GGUF, `.sft`, and plural Forge directory overrides are included in inventory scans.
-- Local bridge responses are scoped to the extension routes and support browser Private Network Access.
+- A dedicated loopback-only bridge on port `8501` keeps CORS/PNA scoped to the extension routes.
 - Generated HTML sidecars escape all remote metadata.
 
 ## Features
@@ -40,7 +40,7 @@ pip install -r arcenciel-link-webui/requirements.txt
 1. Start Forge/WebUI with the extension installed.
 2. Open the ArcEnCiel Link panel on [arcenciel.io](https://arcenciel.io).
 3. Generate or select a Link Key and press **Connect**.
-4. Assign the detected local endpoint if more than one WebUI is running. Common loopback ports include `7860`, `7861`, `7801`, `8188`, `8000`, and `8501`.
+4. Select the detected `8501` endpoint if more than one WebUI is running.
 
 The fallback settings are under `Settings -> ArcEnCiel`. The worker only starts automatically when `Enable ArcEnCiel Link worker` is set.
 
@@ -54,7 +54,7 @@ Environment overrides:
 - `ARCENCIEL_LINK_KEY`
 - `ARCENCIEL_DEV=1`
 
-Configuration is stored in `arcenciel_link/config.json`; the Link Key is moved to the OS keyring when a usable backend exists. Old retired credential fields are removed when the config is loaded and saved.
+Configuration is stored in `arcenciel_link/config.json`; the Link Key is moved to the OS keyring when a usable backend exists. Old retired credential fields are removed when the config is loaded and saved. The browser bridge defaults to `bridge_port: 8501`; set it to `0` only when Forge itself is launched with a compatible explicit CORS configuration.
 
 ## Local routes
 
@@ -63,7 +63,7 @@ Configuration is stored in `arcenciel_link/config.json`; the Link Key is moved t
 - `GET /arcenciel-link/folders/{kind}`
 - `POST /arcenciel-link/generate_sidecars`
 
-Only these extension routes emit ArcEnCiel CORS/PNA headers; the host WebUI middleware is not modified.
+Only these extension routes emit ArcEnCiel CORS/PNA headers. Forge's own server consumes cross-origin preflights before extension routes run, so the default bridge binds only to `127.0.0.1:8501`; the host WebUI middleware is not modified.
 
 ## Development
 

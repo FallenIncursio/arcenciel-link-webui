@@ -51,6 +51,10 @@ _DEFAULT = {
     "backoff_base": 2,
     "webui_root": "",
     "save_html_preview": False,
+    # Forge's global CORS middleware consumes browser preflights before
+    # extension routes run. A dedicated loopback-only bridge avoids changing
+    # CORS policy for the rest of the WebUI.
+    "bridge_port": 8501,
 }
 
 OLD_URLS = {

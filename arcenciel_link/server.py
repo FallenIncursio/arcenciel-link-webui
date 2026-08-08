@@ -2,16 +2,15 @@ import ipaddress
 import threading
 import time
 
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
-
-from .downloader import generate_sidecars_for_existing, RUNNING
-from .utils import list_subfolders
 
 from . import client
 from .config import load as load_config
-from .origins import normalize_origin, is_private_host, is_same_origin
+from .downloader import RUNNING, generate_sidecars_for_existing
+from .origins import is_private_host, is_same_origin, normalize_origin
+from .utils import list_subfolders
 
 _CFG = load_config()
 _DEV_MODE = bool(_CFG.get("_dev_mode"))
@@ -27,10 +26,13 @@ def _is_loopback_host(host: str) -> bool:
 class ToggleLinkPayload(BaseModel):
     enable: bool
     linkKey: str | None = None
-    apiKey: str | None = None
+
+    class Config:
+        extra = "forbid"
 
 
 router = APIRouter(prefix="/arcenciel-link")
+
 
 def _normalize_origin(origin: str, request: Request) -> str | None:
     if is_same_origin(
@@ -59,10 +61,9 @@ def _require_allowed_origin(request: Request) -> str | None:
     raise HTTPException(status_code=403, detail="Origin not allowed")
 
 
-def _build_cors_headers(
-    origin: str | None, extra: dict[str, str] | None = None
-) -> dict[str, str]:
+def _build_cors_headers(origin: str | None, extra: dict[str, str] | None = None) -> dict[str, str]:
     headers: dict[str, str] = {"Vary": "Origin"}
+    headers["Access-Control-Allow-Private-Network"] = "true"
     if origin:
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
@@ -73,7 +74,13 @@ def _build_cors_headers(
 
 @router.get("/ping", response_class=PlainTextResponse)
 def ping() -> PlainTextResponse:
-    return PlainTextResponse("ok", headers={"Access-Control-Allow-Origin": "*"})
+    return PlainTextResponse(
+        "ok",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Private-Network": "true",
+        },
+    )
 
 
 @router.options("/toggle_link")
@@ -98,7 +105,6 @@ def toggle_link(payload: ToggleLinkPayload, request: Request):
         client.apply_worker_state(
             payload.enable,
             link_key=payload.linkKey,
-            api_key=payload.apiKey,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

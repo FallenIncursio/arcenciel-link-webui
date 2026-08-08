@@ -1,13 +1,22 @@
-import base64, json, queue, threading, time, websocket, re
-from .config import load, save
-from .utils import list_subfolders, get_http_session
+import atexit
+import base64
+import json
+import logging
+import queue
+import re
+import signal
 import sys
+import threading
+import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
-import atexit
-import signal
-import logging
-from logging.handlers import RotatingFileHandler
+
+import websocket
+
+from .config import load, save
+from .utils import get_http_session, list_subfolders
+from .version import CAPABILITIES, CLIENT_ID, PROTOCOL_VERSION, VERSION
 
 _LOG_FILE = Path(__file__).with_name("client-debug.log")
 
@@ -21,9 +30,7 @@ def _get_logger() -> logging.Logger | None:
     if _LOGGER is not None:
         return _LOGGER
     try:
-        handler = RotatingFileHandler(
-            _LOG_FILE, maxBytes=262_144, backupCount=1, encoding="utf-8"
-        )
+        handler = RotatingFileHandler(_LOG_FILE, maxBytes=262_144, backupCount=1, encoding="utf-8")
         formatter = logging.Formatter("%(asctime)s %(message)s")
         handler.setFormatter(formatter)
         logger = logging.getLogger("arcenciel_link.client")
@@ -57,6 +64,10 @@ def _normalise_base_url(raw: str, *, allow_insecure: bool) -> str:
         parsed = urlparse(trimmed)
     if parsed.scheme not in ("https", "http"):
         raise ValueError("base_url must start with https://")
+    if not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("base_url must not contain credentials and must include a host")
+    if parsed.query or parsed.fragment:
+        raise ValueError("base_url must not contain a query or fragment")
     if parsed.scheme == "http" and not allow_insecure:
         secure = parsed._replace(scheme="https")
         secure_url = urlunparse(secure)
@@ -70,7 +81,6 @@ def _normalise_base_url(raw: str, *, allow_insecure: bool) -> str:
 
 BASE_URL = _normalise_base_url(_cfg["base_url"], allow_insecure=DEV_MODE)
 LINK_KEY = _cfg.get("link_key", "")
-API_KEY = _cfg.get("api_key", "")
 TIMEOUT = 15
 HEARTBEAT_INTERVAL = 5
 _socket_enabled = False
@@ -95,8 +105,6 @@ def _encode_protocol_value(value: str) -> str:
 def _ws_subprotocols() -> list[str] | None:
     if LINK_KEY.strip():
         return [f"aec-link.link-key.{_encode_protocol_value(LINK_KEY)}"]
-    if API_KEY.strip():
-        return [f"aec-link.api-key.{_encode_protocol_value(API_KEY)}"]
     return None
 
 
@@ -112,25 +120,15 @@ def _display_target() -> str:
 
 def _refresh_ws_url():
     global _WS_URL
-    _WS_URL = (
-        BASE_URL.replace("https://", "wss://").replace("http://", "ws://").rstrip("/")
-        + "/ws"
-    )
+    _WS_URL = BASE_URL.replace("https://", "wss://").replace("http://", "ws://").rstrip("/") + "/ws"
 
 
 def update_credentials(
     *,
     base_url: str | None = None,
     link_key: str | None = None,
-    api_key: str | None = None,
 ):
-    global \
-        BASE_URL, \
-        LINK_KEY, \
-        API_KEY, \
-        _credentials_dirty, \
-        _suspend_until, \
-        _suspend_notice_logged
+    global BASE_URL, LINK_KEY, _credentials_dirty, _suspend_until, _suspend_notice_logged
     ws_needs_refresh = False
     credentials_changed = False
 
@@ -150,13 +148,6 @@ def update_credentials(
         stripped = link_key.strip()
         if stripped != LINK_KEY:
             LINK_KEY = stripped
-            _credentials_dirty = True
-            credentials_changed = True
-
-    if api_key is not None:
-        stripped = api_key.strip()
-        if stripped != API_KEY:
-            API_KEY = stripped
             _credentials_dirty = True
             credentials_changed = True
 
@@ -212,14 +203,23 @@ def _send_ws_payload(payload: dict, *, default_type: str | None = None):
 def _send_worker_state(running: bool | None = None):
     if running is None:
         running = _is_worker_running()
-    _send_ws_payload({"type": "worker_state", "running": bool(running)})
+    _send_ws_payload(
+        {
+            "type": "worker_state",
+            "running": bool(running),
+            "client": CLIENT_ID,
+            "clientVersion": VERSION,
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": list(CAPABILITIES),
+        }
+    )
 
 
 def _send_control_ack(payload: dict):
     _send_ws_payload(payload, default_type="control_ack")
 
 
-def _apply_worker_state(enable: bool, *, link_key=None, api_key=None) -> bool:
+def _apply_worker_state(enable: bool, *, link_key=None) -> bool:
     cfg = load()
     changed = False
 
@@ -228,18 +228,15 @@ def _apply_worker_state(enable: bool, *, link_key=None, api_key=None) -> bool:
         cfg["link_key"] = sanitized_link
         changed = True
 
-    if api_key is not None:
-        stripped_api = api_key.strip() if isinstance(api_key, str) else ""
-        if stripped_api != cfg.get("api_key", ""):
-            cfg["api_key"] = stripped_api
-            changed = True
+    if bool(cfg.get("enabled")) != bool(enable):
+        cfg["enabled"] = bool(enable)
+        changed = True
 
     if changed:
         save(cfg)
         update_credentials(
             base_url=cfg.get("base_url", BASE_URL),
             link_key=cfg.get("link_key", ""),
-            api_key=cfg.get("api_key", ""),
         )
 
     from .downloader import toggle_worker
@@ -257,10 +254,8 @@ def _apply_worker_state(enable: bool, *, link_key=None, api_key=None) -> bool:
     return _is_worker_running()
 
 
-def apply_worker_state(
-    enable: bool, *, link_key: str | None = None, api_key: str | None = None
-) -> bool:
-    return _apply_worker_state(enable, link_key=link_key, api_key=api_key)
+def apply_worker_state(enable: bool, *, link_key: str | None = None) -> bool:
+    return _apply_worker_state(enable, link_key=link_key)
 
 
 _connection_state = "idle"
@@ -284,12 +279,7 @@ def _set_connection_state(state: str, message: str):
 
 
 def _on_open(ws):
-    global \
-        _reconnect_attempts, \
-        _credentials_dirty, \
-        _last_connected_at, \
-        _suspend_until, \
-        _suspend_notice_logged
+    global _reconnect_attempts, _credentials_dirty, _last_connected_at, _suspend_until, _suspend_notice_logged
     _open_evt.set()
     _reconnect_attempts = 0
     _credentials_dirty = False
@@ -342,7 +332,7 @@ def _on_close(ws, code=None, msg=None):
     if code == WS_CLOSE_CODE_UNAUTHORIZED:
         _set_connection_state(
             "blocked",
-            "[AEC-LINK] authentication failed; update API key or link key and re-enable the worker.",
+            "[AEC-LINK] authentication failed; update the Link key and re-enable the worker.",
         )
         set_connection_enabled(False, silent=True)
         return
@@ -351,9 +341,7 @@ def _on_close(ws, code=None, msg=None):
         wait_seconds = _parse_retry_after(reason_text) or _DEFAULT_RATE_LIMIT_WAIT
         _suspend_until = time.monotonic() + wait_seconds
         _suspend_notice_logged = False
-        _set_connection_state(
-            "blocked", f"[AEC-LINK] rate limited; retrying in {int(wait_seconds)}s."
-        )
+        _set_connection_state("blocked", f"[AEC-LINK] rate limited; retrying in {int(wait_seconds)}s.")
         return
 
     if code == WS_CLOSE_CODE_SERVICE_DISABLED:
@@ -403,13 +391,12 @@ def _handle_control(msg: dict):
         response["requestId"] = request_id
     if command == "set_worker_state":
         raw_enable = msg.get("enable")
-        enable = not (raw_enable in (False, "false", 0))
+        enable = raw_enable not in (False, "false", 0)
         response["enable"] = enable
         try:
             running = _apply_worker_state(
                 enable,
                 link_key=msg.get("linkKey"),
-                api_key=msg.get("apiKey"),
             )
             response.update({"ok": True, "running": running})
         except Exception as exc:
@@ -497,9 +484,7 @@ def _ensure_socket():
                 remaining = _suspend_until - time.monotonic()
                 if remaining > 0:
                     if not _suspend_notice_logged:
-                        print(
-                            f"[AEC-LINK] waiting {int(remaining)}s before reconnect..."
-                        )
+                        print(f"[AEC-LINK] waiting {int(remaining)}s before reconnect...")
                         _debug(f"suspend_until active, {remaining:.1f}s remaining")
                         _suspend_notice_logged = True
                     time.sleep(min(remaining, 5))
@@ -511,15 +496,18 @@ def _ensure_socket():
             headers: list[str] = []
             if LINK_KEY:
                 headers.append(f"x-link-key: {LINK_KEY}")
-            elif API_KEY:
-                headers.append(f"x-api-key: {API_KEY}")
+            headers.extend(
+                [
+                    f"x-arcenciel-link-protocol: {PROTOCOL_VERSION}",
+                    f"x-arcenciel-link-capabilities: {','.join(CAPABILITIES)}",
+                    f"x-arcenciel-link-client: {CLIENT_ID}/{VERSION}",
+                ]
+            )
             query = "?" + "&".join(params)
             url = _WS_URL + query
             protocols = _ws_subprotocols()
             try:
-                _set_connection_state(
-                    "connecting", f"[AEC-LINK] connecting to {_display_target()}"
-                )
+                _set_connection_state("connecting", f"[AEC-LINK] connecting to {_display_target()}")
                 _debug(f"connecting via {url}")
                 _sock = websocket.WebSocketApp(
                     url,
@@ -537,17 +525,13 @@ def _ensure_socket():
                 _set_connection_state("error", "[AEC-LINK] connection error")
                 msg = str(e)
                 if msg != _last_error:
-                    print(
-                        "[AEC-LINK] websocket reconnect failed:", msg, file=sys.stderr
-                    )
+                    print("[AEC-LINK] websocket reconnect failed:", msg, file=sys.stderr)
                     _last_error = msg
                     _debug(f"websocket reconnect failed: {msg}")
             finally:
                 _open_evt.clear()
                 _sock = None
-            delay = min(
-                _RECONNECT_MAX_DELAY, _RECONNECT_BASE_DELAY * (2**_reconnect_attempts)
-            )
+            delay = min(_RECONNECT_MAX_DELAY, _RECONNECT_BASE_DELAY * (2**_reconnect_attempts))
             _reconnect_attempts = min(_reconnect_attempts + 1, 6)
             _debug(f"reconnect back-off: {delay:.1f}s")
             time.sleep(delay)
@@ -563,11 +547,14 @@ def _ensure_socket():
 
 
 def headers():
+    result = {
+        "x-arcenciel-link-protocol": str(PROTOCOL_VERSION),
+        "x-arcenciel-link-capabilities": ",".join(CAPABILITIES),
+        "x-arcenciel-link-client": f"{CLIENT_ID}/{VERSION}",
+    }
     if LINK_KEY:
-        return {"x-link-key": LINK_KEY}
-    if API_KEY:
-        return {"x-api-key": API_KEY}
-    return {}
+        result["x-link-key"] = LINK_KEY
+    return result
 
 
 # one-shot health-check so the user sees a console message
@@ -611,9 +598,7 @@ def queue_next_job():
         return None
 
 
-def report_progress(
-    job_id: int, *, progress: int = None, state: str = None, message: str | None = None
-):
+def report_progress(job_id: int, *, progress: int = None, state: str = None, message: str | None = None):
     if _open_evt.is_set():
         _sock.send(
             json.dumps(
@@ -630,11 +615,7 @@ def report_progress(
             _sock.send('{"type":"poll"}')
 
     else:
-        payload = {
-            k: v
-            for k, v in [("progress", progress), ("state", state), ("message", message)]
-            if v is not None
-        }
+        payload = {k: v for k, v in [("progress", progress), ("state", state), ("message", message)] if v is not None}
         SESSION.patch(
             f"{BASE_URL}/queue/{job_id}/progress",
             json=payload,
@@ -692,17 +673,11 @@ for _sig_name in ("SIGINT", "SIGTERM", "SIGHUP"):
 
 
 def force_reconnect():
-    global \
-        _reconnect_attempts, \
-        _last_connected_at, \
-        _suspend_until, \
-        _suspend_notice_logged
+    global _reconnect_attempts, _last_connected_at, _suspend_until, _suspend_notice_logged
     _debug("force_reconnect() invoked")
     if _suspend_until and time.monotonic() < _suspend_until:
         remaining = _suspend_until - time.monotonic()
-        print(
-            f"[AEC-LINK] reconnect paused for {int(remaining)}s due to previous error."
-        )
+        print(f"[AEC-LINK] reconnect paused for {int(remaining)}s due to previous error.")
         _debug(f"force_reconnect blocked by suspend_until ({remaining:.1f}s)")
         return
     if not _socket_enabled:
@@ -737,7 +712,5 @@ def force_reconnect():
 
 
 def cancel_job(job_id: int) -> None:
-    r = SESSION.patch(
-        f"{BASE_URL}/queue/{job_id}/cancel", headers=headers(), timeout=TIMEOUT
-    )
+    r = SESSION.patch(f"{BASE_URL}/queue/{job_id}/cancel", headers=headers(), timeout=TIMEOUT)
     r.raise_for_status()

@@ -1,14 +1,21 @@
 from __future__ import annotations
-import hashlib, json, os, glob
-from pathlib import Path
-from typing import List, Dict, Generator, Set
-import shlex, argparse
+
+import argparse
+import glob
+import hashlib
+import json
+import logging
+import os
+import shlex
 import threading
+from pathlib import Path
+from typing import Dict, Generator, List, Set
 
 import requests
-import logging
 
-_DEFAULT_USER_AGENT = "ArcEnCiel-Link/1.0"
+from .version import VERSION
+
+_DEFAULT_USER_AGENT = f"ArcEnCiel-Link-Forge/{VERSION}"
 _SESSION: requests.Session | None = None
 
 
@@ -33,9 +40,23 @@ def get_http_session() -> requests.Session:
 log = logging.getLogger("arcenciel_link")
 log.setLevel(logging.INFO)
 
-def download_file(url: str, dst: Path, progress_cb):
+
+def download_file(
+    url: str,
+    dst: Path,
+    progress_cb,
+    *,
+    request_headers: dict[str, str] | None = None,
+    allow_redirects: bool = True,
+):
     session = get_http_session()
-    with session.get(url, stream=True, timeout=60) as r:
+    with session.get(
+        url,
+        stream=True,
+        timeout=60,
+        headers=request_headers,
+        allow_redirects=allow_redirects,
+    ) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
         chunk = 1024 * 1024
@@ -55,55 +76,69 @@ def sha256_of_file(p: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-CACHE_DIR  = Path(__file__).parent.parent / "cache"
+
+CACHE_DIR = Path(__file__).parent.parent / "cache"
 CACHE_FILE = CACHE_DIR / "hashes.json"
 _CACHE_LOCK = threading.Lock()
 _CACHE_DATA: Dict[str, Dict] | None = None
 
-MODEL_EXTS = {".safetensors", ".ckpt", ".pt"}
+MODEL_EXTS = {".safetensors", ".ckpt", ".pt", ".sft", ".gguf"}
 
 KNOWN_HASHES = set()
 
 
-def list_subfolders(kind: str) -> list[str]: 
-    base = { 
-        "checkpoint": "models/Stable-diffusion", 
-        "lora": "models/Lora", 
-        "vae": "models/VAE", 
-        "embedding": "embeddings", 
-    }[kind.lower()] 
- 
-    root = Path(get_model_path(base)) 
-    if not root.exists(): 
-        return [] 
- 
-    out: list[str] = [] 
-    for p in root.rglob("*"): 
-        if p.is_dir() and not p.name.startswith("."): 
+def list_subfolders(kind: str) -> list[str]:
+    base = {
+        "checkpoint": "models/Stable-diffusion",
+        "lora": "models/Lora",
+        "vae": "models/VAE",
+        "embedding": "embeddings",
+    }[kind.lower()]
+
+    root = Path(get_model_path(base))
+    if not root.exists():
+        return []
+
+    out: list[str] = []
+    for p in root.rglob("*"):
+        if p.is_dir() and not p.name.startswith("."):
             rel = p.relative_to(root).as_posix()
-            if rel: 
-                out.append(rel) 
- 
+            if rel:
+                out.append(rel)
+
     return sorted(out)
 
 
 def _get_model_dirs(root: Path) -> List[Path]:
     dirs: Set[Path] = set()
 
-    dirs.update({
-        root / "models" / "Stable-diffusion",
-        root / "models" / "Lora",
-        root / "models" / "VAE",
-        root / "embeddings",
-    })
+    dirs.update(
+        {
+            root / "models" / "Stable-diffusion",
+            root / "models" / "Lora",
+            root / "models" / "VAE",
+            root / "embeddings",
+        }
+    )
 
     try:
         from modules import shared
+
         co = shared.cmd_opts
-        if getattr(co, "ckpt_dir", None): dirs.add(Path(co.ckpt_dir))
-        if getattr(co, "lora_dir", None): dirs.add(Path(co.lora_dir))
-        if getattr(co, "vae_dir", None): dirs.add(Path(co.vae_dir))
-        if getattr(co, "embeddings_dir", None): dirs.add(Path(co.embeddings_dir))
+        if getattr(co, "ckpt_dir", None):
+            dirs.add(Path(co.ckpt_dir))
+        for value in getattr(co, "ckpt_dirs", []) or []:
+            dirs.add(Path(value))
+        if getattr(co, "lora_dir", None):
+            dirs.add(Path(co.lora_dir))
+        for value in getattr(co, "lora_dirs", []) or []:
+            dirs.add(Path(value))
+        if getattr(co, "vae_dir", None):
+            dirs.add(Path(co.vae_dir))
+        for value in getattr(co, "vae_dirs", []) or []:
+            dirs.add(Path(value))
+        if getattr(co, "embeddings_dir", None):
+            dirs.add(Path(co.embeddings_dir))
     except Exception:
         pass
 
@@ -111,12 +146,18 @@ def _get_model_dirs(root: Path) -> List[Path]:
     if cla:
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--ckpt-dir")
+        parser.add_argument("--ckpt-dirs", action="append")
         parser.add_argument("--lora-dir")
+        parser.add_argument("--lora-dirs", action="append")
         parser.add_argument("--vae-dir")
+        parser.add_argument("--vae-dirs", action="append")
         parser.add_argument("--embeddings-dir")
         args, _ = parser.parse_known_args(shlex.split(cla))
         for val in vars(args).values():
-            if val: dirs.add(Path(val))
+            if isinstance(val, list):
+                dirs.update(Path(item) for item in val if item)
+            elif val:
+                dirs.add(Path(val))
 
     return [d for d in dirs if d.exists()]
 
@@ -129,11 +170,13 @@ def _load_cache() -> Dict[str, Dict]:
             pass
     return {}
 
+
 def _save_cache(data: Dict):
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_FILE.write_text(json.dumps(data, indent=2))
     global _CACHE_DATA
     _CACHE_DATA = data
+
 
 def _ensure_cache() -> Dict[str, Dict]:
     global _CACHE_DATA
@@ -192,15 +235,15 @@ def list_model_hashes() -> List[str]:
         KNOWN_HASHES.update(result)
         return result
 
+
 def update_cached_hash(path: Path, hash_value: str) -> List[str]:
     resolved = path.resolve()
+    try:
+        mtime = int(resolved.stat().st_mtime)
+    except FileNotFoundError:
+        return list_model_hashes()
     with _CACHE_LOCK:
         cache = _ensure_cache()
-        try:
-            mtime = int(resolved.stat().st_mtime)
-        except FileNotFoundError:
-            return list_model_hashes()
-
         cache[str(resolved)] = {"mtime": mtime, "hash": hash_value}
         _save_cache(cache)
 
@@ -216,27 +259,47 @@ def update_cached_hash(path: Path, hash_value: str) -> List[str]:
 
 
 def _cmd_opts() -> Dict[str, str | None]:
-    opts = {"ckpt_dir": None, "lora_dir": None, "vae_dir": None,
-            "embeddings_dir": None}
+    opts = {"ckpt_dir": None, "lora_dir": None, "vae_dir": None, "embeddings_dir": None}
 
     try:
         from modules import shared
+
         for k in opts:
             val = getattr(shared.cmd_opts, k, None)
-            if val: opts[k] = val
+            if val:
+                opts[k] = val
+        if not opts["ckpt_dir"] and getattr(shared.cmd_opts, "ckpt_dirs", None):
+            opts["ckpt_dir"] = shared.cmd_opts.ckpt_dirs[0]
+        if not opts["lora_dir"] and getattr(shared.cmd_opts, "lora_dirs", None):
+            opts["lora_dir"] = shared.cmd_opts.lora_dirs[0]
+        if not opts["vae_dir"] and getattr(shared.cmd_opts, "vae_dirs", None):
+            opts["vae_dir"] = shared.cmd_opts.vae_dirs[0]
     except Exception:
         pass
 
     if not any(opts.values()) and (cla := os.getenv("COMMANDLINE_ARGS")):
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--ckpt-dir")
+        parser.add_argument("--ckpt-dirs", action="append")
         parser.add_argument("--lora-dir")
+        parser.add_argument("--lora-dirs", action="append")
         parser.add_argument("--vae-dir")
+        parser.add_argument("--vae-dirs", action="append")
         parser.add_argument("--embeddings-dir")
         args, _ = parser.parse_known_args(shlex.split(cla))
-        for k, v in vars(args).items():
+        parsed = vars(args)
+        for k in opts:
+            v = parsed.get(k)
             if v:
                 opts[k] = v
+        for singular, plural in (
+            ("ckpt_dir", "ckpt_dirs"),
+            ("lora_dir", "lora_dirs"),
+            ("vae_dir", "vae_dirs"),
+        ):
+            values = parsed.get(plural)
+            if not opts[singular] and values:
+                opts[singular] = values[0]
 
     return opts
 
@@ -264,7 +327,7 @@ def get_model_path(target: str) -> Path:
         pref_norm = prefix.replace("\\", "/")
         pref_lower = pref_norm.lower()
         if lowered == pref_lower or lowered.startswith(pref_lower + "/"):
-            tail = normalised[len(pref_norm):].lstrip("/\\")
+            tail = normalised[len(pref_norm) :].lstrip("/\\")
             base = Path(real_dir).resolve()
             candidate = base if not tail else (base / Path(tail))
             resolved = candidate.resolve()
@@ -272,7 +335,7 @@ def get_model_path(target: str) -> Path:
                 resolved.relative_to(base)
             except ValueError as exc:
                 raise ValueError("Target path escapes allowed directories") from exc
-            if any(part in ("..", ".") for part in resolved.parts[len(base.parts):]):
+            if any(part in ("..", ".") for part in resolved.parts[len(base.parts) :]):
                 raise ValueError("Target path contains traversal segments")
             return resolved
 

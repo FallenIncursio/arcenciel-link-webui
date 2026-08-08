@@ -1,17 +1,15 @@
 from pathlib import Path
+
 from modules import script_callbacks
 
 try:
     from modules import extra_networks
-except Exception:        # pragma: no cover
-    extra_networks = None        # type: ignore
+except Exception:  # pragma: no cover
+    extra_networks = None  # type: ignore
 
-ICON  = "🔍"
-STYLE = (
-    "position:absolute;top:4px;right:4px;"
-    "background:#fff;border-radius:50%;padding:2px 6px;"
-    "box-shadow:0 0 4px #0006"
-)
+ICON = "🔍"
+STYLE = "position:absolute;top:4px;right:4px;background:#fff;border-radius:50%;padding:2px 6px;box-shadow:0 0 4px #0006"
+
 
 def _inject(html_snippet: str, model_path: str) -> str:
     """hängt den Button an, falls *.html existiert"""
@@ -19,13 +17,13 @@ def _inject(html_snippet: str, model_path: str) -> str:
     if not html_path.exists():
         return html_snippet
 
-    btn = (f'<a class="aec-preview" style="{STYLE}" '
-           f'href="file://{html_path}" target="_blank">{ICON}</a>')
+    btn = f'<a class="aec-preview" style="{STYLE}" href="file://{html_path}" target="_blank">{ICON}</a>'
     return html_snippet + btn
+
 
 if extra_networks and hasattr(extra_networks, "ExtraNetworksDataProcessor"):
 
-    class AECPreview(extra_networks.ExtraNetworksDataProcessor):   # type: ignore
+    class AECPreview(extra_networks.ExtraNetworksDataProcessor):  # type: ignore
         def __init__(self):
             super().__init__("aec_preview")
 
@@ -42,10 +40,7 @@ if extra_networks and hasattr(extra_networks, "ExtraNetworksDataProcessor"):
 elif extra_networks:
 
     def _patch_old_api():
-        pages = (
-            getattr(extra_networks, "extra_pages", None)
-            or getattr(extra_networks, "pages", None)
-        )
+        pages = getattr(extra_networks, "extra_pages", None) or getattr(extra_networks, "pages", None)
         if not pages:
             print("[AEC-LINK] ⚠️  extra_preview: no pages list found – skipping")
             return
@@ -64,7 +59,7 @@ elif extra_networks:
                 except Exception:
                     return _orig(item, *a, **k)
 
-            data.create_thumbnail_html = wrapper     # type: ignore
+            data.create_thumbnail_html = wrapper  # type: ignore
             patched += 1
 
         print(f"[AEC-LINK] 🔍 extra_preview: patched {patched} old pages")

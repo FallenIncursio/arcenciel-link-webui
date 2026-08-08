@@ -1,53 +1,49 @@
-from starlette.middleware import Middleware
-from modules import script_callbacks
+"""ArcEnCiel Link extension package with explicit runtime startup."""
 
-from .client import check_backend_health
-from .config import load as _load_cfg
-from .downloader import schedule_inventory_push
-from .server import router as _api_router
-from .pna_middleware import PrivateNetworkMiddleware
+_started = False
 
-schedule_inventory_push()
-check_backend_health()
 
-def _mount_api(*args, **kwargs):
-    if not args:
+def startup() -> None:
+    """Register host callbacks and start background Link services once."""
+
+    global _started
+    if _started:
         return
-    app = args[-1]
 
-    if not any(m.cls is PrivateNetworkMiddleware for m in app.user_middleware): 
-        try: 
-            app.add_middleware(PrivateNetworkMiddleware) 
-            print("[AEC-LINK] PNA middleware added") 
-        except RuntimeError: 
-            try: 
-                app.user_middleware.insert( 
-                    0, 
-                    Middleware(PrivateNetworkMiddleware), 
-                ) 
-                app.middleware_stack = app.build_middleware_stack() 
-                print("[AEC-LINK] PNA middleware injected late") 
-            except Exception as e: 
-                print("[AEC-LINK] late PNA injection failed", e)
+    from modules import script_callbacks
 
-    if not any(r.path.startswith("/arcenciel-link/") for r in app.router.routes):
-        app.include_router(_api_router)
-        print("[AEC-LINK] API router mounted")
+    from .client import apply_worker_state, check_backend_health
+    from .config import load
+    from .downloader import schedule_inventory_push
+    from .server import router
 
+    def mount_api(*args, **_kwargs):
+        if not args:
+            return
+        app = args[-1]
+        if not any(route.path.startswith("/arcenciel-link/") for route in app.router.routes):
+            app.include_router(router)
+            print("[AEC-LINK] API router mounted")
 
-if hasattr(script_callbacks, "on_app_created"):
-    script_callbacks.on_app_created(_mount_api)
-elif hasattr(script_callbacks, "on_server_loaded"):
-    script_callbacks.on_server_loaded(_mount_api)
-else:
-    script_callbacks.on_app_started(_mount_api)
+    if hasattr(script_callbacks, "on_app_created"):
+        script_callbacks.on_app_created(mount_api)
+    elif hasattr(script_callbacks, "on_server_loaded"):
+        script_callbacks.on_server_loaded(mount_api)
+    else:
+        script_callbacks.on_app_started(mount_api)
 
-_cfg = _load_cfg()
-if _cfg.get("save_html_preview", False):
-    try:
-        import arcenciel_link.extra_preview  # noqa: F401
-    except Exception as e:
-        print("[AEC-LINK] extra_preview not loaded", e)
-else:
-    print("[AEC-LINK] HTML preview disabled")
+    schedule_inventory_push()
+    check_backend_health()
 
+    cfg = load()
+    if cfg.get("link_key"):
+        apply_worker_state(bool(cfg.get("enabled", False)), link_key=cfg.get("link_key"))
+    if cfg.get("save_html_preview", False):
+        try:
+            import arcenciel_link.extra_preview  # noqa: F401
+        except Exception as exc:
+            print("[AEC-LINK] extra_preview not loaded", exc)
+    else:
+        print("[AEC-LINK] HTML preview disabled")
+
+    _started = True

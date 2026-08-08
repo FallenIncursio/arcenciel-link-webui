@@ -1,4 +1,5 @@
-import json, os
+import json
+import os
 import warnings
 from pathlib import Path
 
@@ -39,16 +40,17 @@ except ModuleNotFoundError as exc:  # pragma: no cover
     def migrate_legacy_secret(key: str, value: str | None) -> None:
         return None
 
+
 _CFG = Path(__file__).parent / "config.json"
 _DEFAULT = {
     "base_url": "https://link.arcenciel.io/api/link",
-    "api_key": "",
     "link_key": "",
+    "enabled": False,
     "min_free_mb": 2048,
     "max_retries": 5,
     "backoff_base": 2,
     "webui_root": "",
-    "save_html_preview": False
+    "save_html_preview": False,
 }
 
 OLD_URLS = {
@@ -57,18 +59,28 @@ OLD_URLS = {
 }
 
 _DEV_URL = "http://localhost:3000/api/link"
-_SECRET_KEYS = ("api_key", "link_key")
+_SECRET_KEYS = ("link_key",)
+
 
 def _detect_dev_mode() -> bool:
     if os.getenv("ARCENCIEL_DEV"):
         return True
     return "--dev" in os.getenv("COMMANDLINE_ARGS", "")
 
+
+def _write_private_json(path: Path, payload: dict) -> None:
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2))
+    try:
+        temporary.chmod(0o600)
+    except OSError:
+        pass
+    os.replace(temporary, path)
+
+
 def _apply_env_overrides(cfg: dict) -> None:
     if os.getenv("ARCENCIEL_LINK_URL"):
         cfg["base_url"] = os.getenv("ARCENCIEL_LINK_URL").rstrip("/")
-    if os.getenv("ARCENCIEL_API_KEY"):
-        cfg["api_key"] = os.getenv("ARCENCIEL_API_KEY").strip()
     if os.getenv("ARCENCIEL_LINK_KEY"):
         cfg["link_key"] = os.getenv("ARCENCIEL_LINK_KEY").strip()
 
@@ -87,11 +99,17 @@ def load() -> dict:
 
     if _CFG.exists():
         try:
-            cfg.update(json.loads(_CFG.read_text()))
+            stored = json.loads(_CFG.read_text())
+            retired_credential_present = isinstance(stored, dict) and "api_key" in stored
+            if isinstance(stored, dict):
+                stored.pop("api_key", None)
+                cfg.update(stored)
+            if retired_credential_present:
+                _write_private_json(_CFG, stored)
             if cfg["base_url"] in OLD_URLS:
                 cfg["base_url"] = _DEFAULT["base_url"]
                 try:
-                    _CFG.write_text(json.dumps(cfg, indent=2))
+                    _write_private_json(_CFG, cfg)
                 except Exception:
                     pass
         except Exception:
@@ -101,12 +119,12 @@ def load() -> dict:
     if dev_mode and cfg["base_url"] == _DEFAULT["base_url"]:
         cfg["base_url"] = _DEV_URL
 
-    try: 
-        from modules import shared 
-        cfg["base_url"] = shared.opts.data.get("arcenciel_link_base_url", cfg["base_url"]) 
-        cfg["api_key"]  = shared.opts.data.get("arcenciel_link_api_key",  cfg["api_key"]) 
-        cfg["link_key"] = shared.opts.data.get("arcenciel_link_access_key", cfg.get("link_key", "")) 
-    except Exception: 
+    try:
+        from modules import shared
+
+        cfg["base_url"] = shared.opts.data.get("arcenciel_link_base_url", cfg["base_url"])
+        cfg["link_key"] = shared.opts.data.get("arcenciel_link_access_key", cfg.get("link_key", ""))
+    except Exception:
         pass
 
     _apply_env_overrides(cfg)
@@ -115,6 +133,7 @@ def load() -> dict:
     cfg["_dev_mode"] = dev_mode
 
     return cfg
+
 
 def save(cfg: dict):
     for key in _SECRET_KEYS:
@@ -128,4 +147,4 @@ def save(cfg: dict):
             secret = sanitize_legacy_secret(cfg.get(key))
             to_write[key] = secret or ""
 
-    _CFG.write_text(json.dumps(to_write, indent=2))
+    _write_private_json(_CFG, to_write)

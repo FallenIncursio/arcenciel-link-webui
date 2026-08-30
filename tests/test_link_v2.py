@@ -122,6 +122,42 @@ def test_default_browser_bridge_stays_enabled(monkeypatch, tmp_path):
     assert config.load()["bridge_port"] == 8501
 
 
+def test_hosted_runtime_environment_overrides_persisted_settings(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "base_url": "https://link.arcenciel.io/api/link",
+                "enabled": False,
+            }
+        )
+    )
+    monkeypatch.setattr(config, "_CFG", config_file)
+    monkeypatch.setattr(config, "is_secure_storage_available", lambda: True)
+    monkeypatch.setattr(config, "get_secret", lambda _key: "lk_" + "a" * 32)
+    monkeypatch.setattr(config, "migrate_legacy_secret", lambda _key, _value: None)
+    monkeypatch.setenv("ARCENCIEL_LINK_KEY", "lk_" + "b" * 32)
+    monkeypatch.setenv("ARCENCIEL_LINK_ENABLED", "1")
+
+    loaded = config.load()
+
+    assert loaded["link_key"] == "lk_" + "b" * 32
+    assert loaded["enabled"] is True
+
+
+def test_invalid_hosted_runtime_enabled_value_is_ignored(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "_CFG", tmp_path / "missing.json")
+    monkeypatch.setattr(config, "is_secure_storage_available", lambda: False)
+    monkeypatch.setattr(config, "get_secret", lambda _key: None)
+    monkeypatch.setattr(config, "migrate_legacy_secret", lambda _key, _value: None)
+    monkeypatch.setenv("ARCENCIEL_LINK_ENABLED", "sometimes")
+
+    with pytest.warns(RuntimeWarning, match="ARCENCIEL_LINK_ENABLED"):
+        loaded = config.load()
+
+    assert loaded["enabled"] is False
+
+
 def test_plural_forge_directories_are_discovered(monkeypatch, tmp_path):
     checkpoint_dir = tmp_path / "checkpoints"
     checkpoint_dir.mkdir()

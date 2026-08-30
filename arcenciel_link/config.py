@@ -64,6 +64,8 @@ OLD_URLS = {
 
 _DEV_URL = "http://localhost:3000/api/link"
 _SECRET_KEYS = ("link_key",)
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def _detect_dev_mode() -> bool:
@@ -87,6 +89,19 @@ def _apply_env_overrides(cfg: dict) -> None:
         cfg["base_url"] = os.getenv("ARCENCIEL_LINK_URL").rstrip("/")
     if os.getenv("ARCENCIEL_LINK_KEY"):
         cfg["link_key"] = os.getenv("ARCENCIEL_LINK_KEY").strip()
+    raw_enabled = os.getenv("ARCENCIEL_LINK_ENABLED")
+    if raw_enabled is not None:
+        normalized = raw_enabled.strip().lower()
+        if normalized in _TRUE_VALUES:
+            cfg["enabled"] = True
+        elif normalized in _FALSE_VALUES:
+            cfg["enabled"] = False
+        else:
+            warnings.warn(
+                "[arcenciel-link] ARCENCIEL_LINK_ENABLED must be one of 1/0, true/false, yes/no, or on/off",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
 
 def _load_keyring_secrets(cfg: dict) -> None:
@@ -131,8 +146,10 @@ def load() -> dict:
     except Exception:
         pass
 
-    _apply_env_overrides(cfg)
     _load_keyring_secrets(cfg)
+    # Explicit runtime configuration must win over persisted desktop settings.
+    # This is required for ephemeral hosted runtimes such as Google Colab.
+    _apply_env_overrides(cfg)
 
     cfg["_dev_mode"] = dev_mode
 

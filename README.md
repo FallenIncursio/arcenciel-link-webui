@@ -44,6 +44,22 @@ pip install -r arcenciel-link-webui/requirements.txt
 
 The fallback settings are under `Settings -> ArcEnCiel`. The worker only starts automatically when `Enable ArcEnCiel Link worker` is set.
 
+### Google Colab and other hosted runtimes
+
+The browser cannot reach a WebUI loopback bridge running inside Colab. Configure the same Link Key in the hosted runtime before the WebUI
+starts, then leave the website endpoint on **Remote / Colab**:
+
+```python
+from google.colab import userdata
+import os
+
+os.environ["ARCENCIEL_LINK_KEY"] = userdata.get("ARCENCIEL_LINK_KEY").strip()
+os.environ["ARCENCIEL_LINK_ENABLED"] = "1"
+```
+
+Store `ARCENCIEL_LINK_KEY` in Colab Secrets; do not paste it into a shared notebook. The extension connects outbound over HTTPS/WSS, so
+port `8501` remains loopback-only and must not be exposed through a public tunnel.
+
 ## Configuration and security
 
 The production API endpoint is `https://link.arcenciel.io/api/link`. HTTP endpoints and private origins are accepted only when `ARCENCIEL_DEV=1` or the WebUI `--dev` flag is present.
@@ -52,6 +68,7 @@ Environment overrides:
 
 - `ARCENCIEL_LINK_URL`
 - `ARCENCIEL_LINK_KEY`
+- `ARCENCIEL_LINK_ENABLED=1|0`
 - `ARCENCIEL_DEV=1`
 
 Configuration is stored in `arcenciel_link/config.json`; the Link Key is moved to the OS keyring when a usable backend exists. Old retired credential fields are removed when the config is loaded and saved. The browser bridge defaults to `bridge_port: 8501`; set it to `0` only when Forge itself is launched with a compatible explicit CORS configuration.

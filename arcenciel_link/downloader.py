@@ -320,7 +320,12 @@ def _worker():
 
             # already have?
             if sha_server and _already_have(sha_server):
-                client.report_progress(job["id"], state="DONE", progress=100)
+                client.report_progress(
+                    job["id"],
+                    state="DONE",
+                    progress=100,
+                    message="ALREADY_PRESENT: Model already exists on this device.",
+                )
                 continue
 
             label = dst_path.name

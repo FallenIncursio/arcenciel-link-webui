@@ -14,10 +14,10 @@ from urllib.parse import urlparse, urlunparse
 
 import websocket
 
-from . import job_attempt
+from . import job_attempt, setup_check
 from .config import load, save
 from .runtime_config import validate_worker_change
-from .utils import get_http_session, list_subfolders
+from .utils import get_http_session, get_model_path, list_subfolders
 from .version import CAPABILITIES, CLIENT_ID, PROTOCOL_VERSION, VERSION
 
 _LOG_FILE = Path(__file__).with_name("client-debug.log")
@@ -393,6 +393,18 @@ def _handle_control(msg: dict):
     response = {"command": command}
     if request_id is not None:
         response["requestId"] = request_id
+    if command == "setup_check":
+        setup_check.start_check(
+            msg,
+            runtime_id=job_attempt.RUNTIME_ID,
+            root_for=get_model_path,
+            session=SESSION,
+            base_url=BASE_URL,
+            headers=headers(),
+            reply=_send_ws_payload,
+            busy=job_attempt.ACTIVE is not None,
+        )
+        return
     if command == "cancel_job":
         response["ok"] = job_attempt.cancel_attempt(msg.get("jobId"), msg.get("attemptId"), msg.get("runtimeId"))
         # The lease cancel_ack is sent only after the downloader closes and removes its partial file.

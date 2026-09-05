@@ -53,3 +53,61 @@ def test_worker_verification_requires_authenticated_key_identity(monkeypatch):
     monkeypatch.setattr(link, "urlopen", lambda *_args, **_kwargs: io.BytesIO(json.dumps(next(replies)).encode()))
     monkeypatch.setattr(link.time, "sleep", lambda _seconds: None)
     assert link.wait_for_worker() == {"workerOnline": True, "linkKeyId": 7}
+
+
+def test_health_probe_identifies_the_notebook_client(monkeypatch):
+    monkeypatch.setenv("ARCENCIEL_LINK_KEY", "lk_" + "a" * 32)
+    calls = []
+
+    def serve(request, **_kwargs):
+        calls.append(request)
+        return io.BytesIO(b'{"status":"ok","workerOnline":true,"linkKeyId":7}')
+
+    monkeypatch.setattr(link, "urlopen", serve)
+    link.wait_for_worker()
+    assert calls[0].get_header("User-agent") == "ArcEnCiel-Link-Notebook/2.1.1"
+
+
+def test_install_pins_a_named_branch_and_preserves_existing_branches(tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(host)], check=True)
+    (host / "main.py").touch()
+    extension = host / "custom_nodes/arcenciel-link-comfyui"
+    extension.mkdir(parents=True)
+    subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(extension)], check=True)
+    for field, value in [("user.email", "test@example.invalid"), ("user.name", "Contract Test")]:
+        subprocess.run(["git", "-C", str(extension), "config", field, value], check=True)
+    (extension / "requirements.txt").touch()
+    subprocess.run(["git", "-C", str(extension), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(extension), "commit", "--quiet", "-m", "release"], check=True)
+    subprocess.run(["git", "-C", str(extension), "tag", link.RELEASE], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(extension),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/FallenIncursio/arcenciel-link-comfyui.git",
+        ],
+        check=True,
+    )
+    original = subprocess.check_output(["git", "-C", str(extension), "rev-parse", "main"], text=True).strip()
+    run = subprocess.run
+
+    def offline_run(command, **kwargs):
+        if "fetch" in command or "pip" in command:
+            return subprocess.CompletedProcess(command, 0)
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(link.subprocess, "run", offline_run)
+    link.install_extension("comfyui", host)
+    assert (
+        subprocess.check_output(["git", "-C", str(extension), "branch", "--show-current"], text=True).strip()
+        == "arcenciel-link-v2.1.1"
+    )
+    assert subprocess.check_output(["git", "-C", str(extension), "rev-parse", "HEAD"], text=True).strip() == original
+    assert subprocess.check_output(["git", "-C", str(extension), "rev-parse", "main"], text=True).strip() == original
+    link.install_extension("comfyui", host)  # Re-running setup keeps the same immutable commit.

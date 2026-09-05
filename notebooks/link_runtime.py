@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-RELEASE = "v2.1.0"
+RELEASE = "v2.1.1"
 BASE_URL = "https://link.arcenciel.io/api/link"
 HOSTS = {
     "webui": ("launch.py", "extensions/arcenciel-link-webui", "arcenciel-link-webui"),
@@ -83,7 +83,20 @@ def install_extension(kind: str, root: str | Path) -> Path:
     commit = subprocess.check_output(
         ["git", "-C", str(extension), "rev-parse", f"{RELEASE}^{{commit}}"], text=True
     ).strip()
-    subprocess.run(["git", "-C", str(extension), "checkout", "--detach", commit], check=True)
+    # Forge reads active_branch while loading extension metadata. Keep the pin on a
+    # named local branch without overwriting any existing branch or local commit.
+    branch = f"arcenciel-link-{RELEASE}"
+    existing = subprocess.run(
+        ["git", "-C", str(extension), "rev-parse", "--verify", f"refs/heads/{branch}"],
+        capture_output=True,
+        text=True,
+    )
+    if existing.returncode == 0:
+        if existing.stdout.strip() != commit:
+            raise RuntimeError("The pinned release branch contains local commits; preserve them before updating")
+        subprocess.run(["git", "-C", str(extension), "checkout", branch], check=True)
+    else:
+        subprocess.run(["git", "-C", str(extension), "checkout", "-b", branch, commit], check=True)
     if kind != "swarmui":
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(extension / "requirements.txt")], check=True)
     print(f"Link {RELEASE} installed for {kind} ({commit[:12]}). Restart the host to load it.")
@@ -105,7 +118,10 @@ def wait_for_worker(timeout: float = 120) -> dict:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            request = Request(BASE_URL + "/health", headers={"x-link-key": key})
+            request = Request(
+                BASE_URL + "/health",
+                headers={"x-link-key": key, "User-Agent": f"ArcEnCiel-Link-Notebook/{RELEASE.removeprefix('v')}"},
+            )
             with urlopen(request, timeout=15) as response:
                 health = json.load(response)
             if health.get("disabled"):
@@ -115,6 +131,10 @@ def wait_for_worker(timeout: float = 120) -> dict:
                 return {"workerOnline": True, "linkKeyId": health["linkKeyId"]}
         except HTTPError as exc:
             if exc.code in (401, 403):
+                if exc.headers.get_content_type() != "application/json":
+                    raise RuntimeError(
+                        "Link verification was blocked by the HTTP gateway; check runtime network access"
+                    ) from None
                 raise RuntimeError("Link key rejected; check its validity and jobs/inventory scopes") from None
         except (URLError, TimeoutError):
             pass

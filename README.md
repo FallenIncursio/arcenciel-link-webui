@@ -74,7 +74,7 @@ Explicit environment variables override saved desktop settings, including explic
 
 Pause/resume works during the current process. On restart, `ARCENCIEL_LINK_ENABLED` takes effect again. Changing an environment-managed key through the browser is rejected: update the runtime secret and restart the host. Existing desktop installations with valid settings need no migration. Protocol 2 and the browser toggle payload are unchanged.
 
-For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.1.2/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
+For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.2.0/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
 
 ## Configuration and security
 
@@ -124,3 +124,14 @@ Tags must match both `pyproject.toml` and `arcenciel_link/version.py`. A `vX.Y.Z
 ## License
 
 [MIT](LICENSE)
+
+## Reliable download attempts (2.2.0)
+
+The worker negotiates `job_lease_v1` with ArcEnCiel. Each device accepts one reserved download at a time and
+acknowledges the attempt before opening a file. A fresh runtime identity, periodic heartbeats and attempt IDs
+prevent stale workers from changing completed or cancelled jobs. The server retries expired attempts at most
+three times, then reports an actionable error. Restarting a lost transfer currently downloads the file again.
+
+Cancel interrupts the stream, hash check and retry wait, cleans this attempt's partial file and confirms cleanup.
+If cancellation arrives after the atomic file commit, the installed model stays on disk. Legacy server compatibility
+is retained; automatic recovery requires the updated ArcEnCiel server. Keep each device on its own Link Key.

@@ -1,4 +1,4 @@
-VERSION = "2.1.2"
+VERSION = "2.2.0"
 PROTOCOL_VERSION = 2
-CAPABILITIES = ("private_download_grant_v1",)
+CAPABILITIES = ("private_download_grant_v1", "job_lease_v1")
 CLIENT_ID = "forge"

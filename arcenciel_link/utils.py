@@ -13,6 +13,7 @@ from typing import Dict, Generator, List, Set
 
 import requests
 
+from . import job_attempt
 from .version import VERSION
 
 _DEFAULT_USER_AGENT = f"ArcEnCiel-Link-Forge/{VERSION}"
@@ -53,18 +54,26 @@ def download_file(
     with session.get(
         url,
         stream=True,
-        timeout=60,
+        timeout=(10, 5),
         headers=request_headers,
         allow_redirects=allow_redirects,
     ) as r:
+        active = job_attempt.ACTIVE
+        if active:
+            active.response = r
+            active.check()
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
-        chunk = 1024 * 1024
+        chunk = 64 * 1024
         with open(dst, "wb") as f:
             done = 0
             for part in r.iter_content(chunk_size=chunk):
+                if active:
+                    active.check()
                 f.write(part)
                 done += len(part)
+                if active:
+                    active.bytes_downloaded = done
                 if total:
                     progress_cb(done / total)
 
@@ -73,6 +82,8 @@ def sha256_of_file(p: Path) -> str:
     h = hashlib.sha256()
     with open(p, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            if job_attempt.ACTIVE:
+                job_attempt.ACTIVE.check()
             h.update(chunk)
     return h.hexdigest()
 

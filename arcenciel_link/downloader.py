@@ -14,7 +14,7 @@ from pathlib import Path
 from textwrap import dedent
 from urllib.parse import unquote, urlparse
 
-from . import client
+from . import client, job_attempt
 from .config import load
 from .utils import (
     download_file,
@@ -144,6 +144,8 @@ def _download_with_retry(
 ):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            if job_attempt.ACTIVE:
+                job_attempt.ACTIVE.check()
             download_file(
                 url,
                 tmp,
@@ -152,11 +154,17 @@ def _download_with_retry(
                 allow_redirects=allow_redirects,
             )
             return
+        except job_attempt.AttemptStopped:
+            tmp.unlink(missing_ok=True)
+            raise
         except Exception:
             tmp.unlink(missing_ok=True)
             if attempt == MAX_RETRIES:
                 raise
-            time.sleep(BACKOFF_BASE**attempt + random.uniform(0, 1))
+            if job_attempt.ACTIVE:
+                job_attempt.ACTIVE.wait(BACKOFF_BASE**attempt + random.uniform(0, 1))
+            else:
+                time.sleep(BACKOFF_BASE**attempt + random.uniform(0, 1))
 
 
 def _save_preview(url: str, model_path: Path) -> str | None:
@@ -269,7 +277,10 @@ def _worker():
             time.sleep(SLEEP_AFTER_ERROR)
             continue
 
+        attempt = None
+        tmp_path = None
         try:
+            attempt = job_attempt.JobAttempt(job, client.SESSION, client.BASE_URL, client.headers).start()
             ver = job["version"]
             meta = ver.get("meta") or {}
             url_raw = ver.get("externalDownloadUrl") or ver.get("filePath")
@@ -315,7 +326,7 @@ def _worker():
             label = dst_path.name
 
             # download   tmp
-            tmp_path = dst_path.with_suffix(".part")
+            tmp_path = dst_path.with_name(dst_path.name + "." + (attempt.token or "legacy") + ".part")
             client.report_progress(job["id"], state="DOWNLOADING", progress=0)
             _print_progress(label, 0)
             last_progress = {"pct": 0, "ts": time.monotonic()}
@@ -347,6 +358,8 @@ def _worker():
                 tmp_path.unlink(missing_ok=True)
                 raise RuntimeError("SHA-256 mismatch")
 
+            attempt.renew()
+            attempt.check()
             tmp_path.rename(dst_path)
 
             # side-cars
@@ -361,10 +374,20 @@ def _worker():
             client.report_progress(job["id"], state="DONE", progress=100)
             _print_progress(label)
 
+        except job_attempt.AttemptStopped:
+            print("[AEC-LINK] download stopped", flush=True)
         except Exception as e:
             print(f"[AEC-LINK] worker error: {e}")
-            client.report_progress(job["id"], state="ERROR", message=str(e))
+            try:
+                client.report_progress(job["id"], state="ERROR", message=str(e))
+            except Exception:
+                pass
             time.sleep(SLEEP_AFTER_ERROR)
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            if attempt is not None:
+                attempt.finish()
 
 
 def toggle_worker(enable: bool):

@@ -1,7 +1,7 @@
 [project]
 name = "arcenciel-link-forge"
 description = "ArcEnCiel Link worker integration for Forge and compatible Stable Diffusion WebUIs."
-version = "2.1.2"
+version = "2.2.0"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

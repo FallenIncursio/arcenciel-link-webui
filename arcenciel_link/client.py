@@ -14,6 +14,7 @@ from urllib.parse import urlparse, urlunparse
 
 import websocket
 
+from . import job_attempt
 from .config import load, save
 from .runtime_config import validate_worker_change
 from .utils import get_http_session, list_subfolders
@@ -212,6 +213,7 @@ def _send_worker_state(running: bool | None = None):
             "clientVersion": VERSION,
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": list(CAPABILITIES),
+            "runtimeId": job_attempt.RUNTIME_ID,
         }
     )
 
@@ -391,6 +393,11 @@ def _handle_control(msg: dict):
     response = {"command": command}
     if request_id is not None:
         response["requestId"] = request_id
+    if command == "cancel_job":
+        response["ok"] = job_attempt.cancel_attempt(msg.get("jobId"), msg.get("attemptId"), msg.get("runtimeId"))
+        # The lease cancel_ack is sent only after the downloader closes and removes its partial file.
+        _send_control_ack(response)
+        return
     if command == "set_worker_state":
         raw_enable = msg.get("enable")
         enable = raw_enable not in (False, "false", 0)
@@ -501,6 +508,7 @@ def _ensure_socket():
             headers.extend(
                 [
                     f"x-arcenciel-link-protocol: {PROTOCOL_VERSION}",
+                    f"x-arcenciel-link-runtime: {job_attempt.RUNTIME_ID}",
                     f"x-arcenciel-link-capabilities: {','.join(CAPABILITIES)}",
                     f"x-arcenciel-link-client: {CLIENT_ID}/{VERSION}",
                 ]
@@ -550,6 +558,7 @@ def _ensure_socket():
 
 def headers():
     result = {
+        "x-arcenciel-link-runtime": job_attempt.RUNTIME_ID,
         "x-arcenciel-link-protocol": str(PROTOCOL_VERSION),
         "x-arcenciel-link-capabilities": ",".join(CAPABILITIES),
         "x-arcenciel-link-client": f"{CLIENT_ID}/{VERSION}",
@@ -601,29 +610,25 @@ def queue_next_job():
 
 
 def report_progress(job_id: int, *, progress: int = None, state: str = None, message: str | None = None):
-    if _open_evt.is_set():
-        _sock.send(
-            json.dumps(
-                {
-                    "type": "progress",
-                    "jobId": job_id,
-                    "progress": progress,
-                    "state": state,
-                    "message": message,
-                }
-            )
-        )
-        if state == "DONE":
-            _sock.send('{"type":"poll"}')
-
+    active = job_attempt.ACTIVE
+    fields = active.fields() if active is not None and active.job["id"] == job_id else {}
+    if active is not None:
+        active.check()
+    payload = {
+        k: v for k, v in {"progress": progress, "state": state, "message": message, **fields}.items() if v is not None
+    }
+    if _open_evt.is_set() and not (fields.get("attemptId") and state in ("DONE", "ERROR")):
+        _sock.send(json.dumps({"type": "progress", "jobId": job_id, **payload}))
     else:
-        payload = {k: v for k, v in [("progress", progress), ("state", state), ("message", message)] if v is not None}
-        SESSION.patch(
-            f"{BASE_URL}/queue/{job_id}/progress",
-            json=payload,
-            headers=headers(),
-            timeout=TIMEOUT,
-        )
+        with SESSION.patch(
+            f"{BASE_URL}/queue/{job_id}/progress", json=payload, headers=headers(), timeout=TIMEOUT
+        ) as reply:
+            if reply.status_code == 409 and active is not None:
+                if reply.json().get("state") == "DONE" and state == "DONE":
+                    return
+                active.stop()
+                raise job_attempt.AttemptStopped("Attempt no longer active")
+            reply.raise_for_status()
 
 
 def push_inventory(hashes: list[str]):

@@ -1,0 +1,368 @@
+{
+  "contract": 1,
+  "cases": [
+    {
+      "name": "persisted desktop",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {},
+      "expected": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      }
+    },
+    {
+      "name": "runtime overrides desktop",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": " https://host.example/api/link/ ",
+        "ARCENCIEL_LINK_KEY": " lk_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ",
+        "ARCENCIEL_LINK_ENABLED": " YES "
+      },
+      "expected": {
+        "base_url": "https://host.example/api/link",
+        "link_key": "lk_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "enabled": true
+      }
+    },
+    {
+      "name": "empty key clears persisted secret",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_KEY": ""
+      },
+      "expected": {
+        "link_key": "",
+        "enabled": false
+      }
+    },
+    {
+      "name": "invalid boolean fails closed",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "sometimes"
+      },
+      "expected": {
+        "enabled": false
+      }
+    },
+    {
+      "name": "blank boolean fails closed",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": ""
+      },
+      "expected": {
+        "enabled": false
+      }
+    },
+    {
+      "name": "missing key cannot autostart",
+      "stored": {},
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "true"
+      },
+      "expected": {
+        "link_key": "",
+        "enabled": false
+      }
+    },
+    {
+      "name": "no config file still reads environment",
+      "stored": null,
+      "env": {
+        "ARCENCIEL_LINK_KEY": "lk_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "ARCENCIEL_LINK_ENABLED": "1"
+      },
+      "expected": {
+        "link_key": "lk_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "enabled": true
+      }
+    },
+    {
+      "name": "disabled 0",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "0"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "disabled false",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "false"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "disabled no",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "no"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "disabled off",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "off"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "disabled  FALSE ",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": " FALSE "
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "enabled 1",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": false
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "1"
+      },
+      "expected": {
+        "enabled": true
+      }
+    },
+    {
+      "name": "enabled true",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": false
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "true"
+      },
+      "expected": {
+        "enabled": true
+      }
+    },
+    {
+      "name": "enabled yes",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": false
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "yes"
+      },
+      "expected": {
+        "enabled": true
+      }
+    },
+    {
+      "name": "enabled on",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": false
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": "on"
+      },
+      "expected": {
+        "enabled": true
+      }
+    },
+    {
+      "name": "enabled  TRUE ",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": false
+      },
+      "env": {
+        "ARCENCIEL_LINK_ENABLED": " TRUE "
+      },
+      "expected": {
+        "enabled": true
+      }
+    },
+    {
+      "name": "reject URL ",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": ""
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    },
+    {
+      "name": "reject URL ftp://host.example/api/link",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": "ftp://host.example/api/link"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    },
+    {
+      "name": "reject URL http://host.example/api/link",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": "http://host.example/api/link"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    },
+    {
+      "name": "reject URL https://user:password@host.example/api/link",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": "https://user:password@host.example/api/link"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    },
+    {
+      "name": "reject URL https://host.example/api/link?key=value",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": "https://host.example/api/link?key=value"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    },
+    {
+      "name": "reject URL https://host.example/api/link#fragment",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": "https://host.example/api/link#fragment"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    },
+    {
+      "name": "reject URL not a URL",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_URL": "not a URL"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    },
+    {
+      "name": "invalid key clears credential",
+      "stored": {
+        "base_url": "https://link.arcenciel.io/api/link",
+        "link_key": "lk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "enabled": true
+      },
+      "env": {
+        "ARCENCIEL_LINK_KEY": "invalid-secret"
+      },
+      "expected": {
+        "enabled": false,
+        "link_key": ""
+      }
+    }
+  ]
+}

@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 import websocket
 
 from .config import load, save
+from .runtime_config import validate_worker_change
 from .utils import get_http_session, list_subfolders
 from .version import CAPABILITIES, CLIENT_ID, PROTOCOL_VERSION, VERSION
 
@@ -224,6 +225,7 @@ def _apply_worker_state(enable: bool, *, link_key=None) -> bool:
     changed = False
 
     sanitized_link = _sanitize_link_key(link_key)
+    validate_worker_change(cfg, enable, sanitized_link)
     if sanitized_link is not None and sanitized_link != cfg.get("link_key", ""):
         cfg["link_key"] = sanitized_link
         changed = True
@@ -234,10 +236,10 @@ def _apply_worker_state(enable: bool, *, link_key=None) -> bool:
 
     if changed:
         save(cfg)
-        update_credentials(
-            base_url=cfg.get("base_url", BASE_URL),
-            link_key=cfg.get("link_key", ""),
-        )
+    update_credentials(
+        base_url=cfg.get("base_url", BASE_URL),
+        link_key=cfg.get("link_key", ""),
+    )
 
     from .downloader import toggle_worker
 

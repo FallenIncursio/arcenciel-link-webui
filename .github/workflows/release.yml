@@ -30,7 +30,7 @@ jobs:
       - name: Package extension
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: zip -r "arcenciel-link-forge-${RELEASE_TAG}.zip" arcenciel_link scripts install.py requirements.txt README.md LICENSE pyproject.toml -x "*/__pycache__/*" "*.pyc"
+        run: zip -r "arcenciel-link-forge-${RELEASE_TAG}.zip" arcenciel_link scripts notebooks install.py requirements.txt README.md LICENSE pyproject.toml -x "*/__pycache__/*" "*.pyc"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

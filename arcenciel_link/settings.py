@@ -1,3 +1,5 @@
+import os
+
 from modules import script_callbacks, shared
 
 from .config import _detect_dev_mode, load, save
@@ -11,14 +13,14 @@ def _apply_opts():
         link_key=shared.opts.data.get("arcenciel_link_access_key", _cfg.get("link_key", "")).strip(),
         enabled=bool(shared.opts.data.get("arcenciel_link_enabled", _cfg.get("enabled", False))),
     )
+    if "ARCENCIEL_LINK_KEY" in os.environ:
+        _cfg["link_key"] = os.environ["ARCENCIEL_LINK_KEY"].strip()
+    if "ARCENCIEL_LINK_URL" in os.environ:
+        _cfg["base_url"] = os.environ["ARCENCIEL_LINK_URL"].strip().rstrip("/")
     save(_cfg)
 
     import arcenciel_link.client as client
 
-    client.update_credentials(
-        base_url=_cfg["base_url"],
-        link_key=_cfg.get("link_key", ""),
-    )
     client.apply_worker_state(_cfg["enabled"], link_key=_cfg.get("link_key", ""))
 
 
@@ -37,8 +39,8 @@ def on_ui_settings():
     shared.opts.add_option(
         "arcenciel_link_access_key",
         shared.OptionInfo(
-            _cfg.get("link_key", ""),
-            "Link Key (lk_...)",
+            "" if "ARCENCIEL_LINK_KEY" in os.environ else _cfg.get("link_key", ""),
+            "Link Key (managed by runtime environment)" if "ARCENCIEL_LINK_KEY" in os.environ else "Link Key (lk_...)",
             section=section,
             onchange=_apply_opts,
         ),

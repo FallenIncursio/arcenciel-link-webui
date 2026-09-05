@@ -107,7 +107,7 @@ def toggle_link(payload: ToggleLinkPayload, request: Request):
             link_key=payload.linkKey,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc), headers=_build_cors_headers(origin))
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to toggle worker") from exc
 

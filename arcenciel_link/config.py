@@ -3,6 +3,8 @@ import os
 import warnings
 from pathlib import Path
 
+from .runtime_config import apply_environment, persistent_payload
+
 try:
     from .secure_store import (
         get_secret,
@@ -64,8 +66,6 @@ OLD_URLS = {
 
 _DEV_URL = "http://localhost:3000/api/link"
 _SECRET_KEYS = ("link_key",)
-_TRUE_VALUES = {"1", "true", "yes", "on"}
-_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def _detect_dev_mode() -> bool:
@@ -82,26 +82,6 @@ def _write_private_json(path: Path, payload: dict) -> None:
     except OSError:
         pass
     os.replace(temporary, path)
-
-
-def _apply_env_overrides(cfg: dict) -> None:
-    if os.getenv("ARCENCIEL_LINK_URL"):
-        cfg["base_url"] = os.getenv("ARCENCIEL_LINK_URL").rstrip("/")
-    if os.getenv("ARCENCIEL_LINK_KEY"):
-        cfg["link_key"] = os.getenv("ARCENCIEL_LINK_KEY").strip()
-    raw_enabled = os.getenv("ARCENCIEL_LINK_ENABLED")
-    if raw_enabled is not None:
-        normalized = raw_enabled.strip().lower()
-        if normalized in _TRUE_VALUES:
-            cfg["enabled"] = True
-        elif normalized in _FALSE_VALUES:
-            cfg["enabled"] = False
-        else:
-            warnings.warn(
-                "[arcenciel-link] ARCENCIEL_LINK_ENABLED must be one of 1/0, true/false, yes/no, or on/off",
-                RuntimeWarning,
-                stacklevel=2,
-            )
 
 
 def _load_keyring_secrets(cfg: dict) -> None:
@@ -149,7 +129,7 @@ def load() -> dict:
     _load_keyring_secrets(cfg)
     # Explicit runtime configuration must win over persisted desktop settings.
     # This is required for ephemeral hosted runtimes such as Google Colab.
-    _apply_env_overrides(cfg)
+    apply_environment(cfg, dev_mode=dev_mode)
 
     cfg["_dev_mode"] = dev_mode
 
@@ -157,15 +137,19 @@ def load() -> dict:
 
 
 def save(cfg: dict):
-    for key in _SECRET_KEYS:
-        secret = sanitize_legacy_secret(cfg.get(key))
-        set_secret(key, secret)
-
-    to_write = {k: v for k, v in cfg.items() if k not in _SECRET_KEYS}
-
-    if not is_secure_storage_available():
+    try:
+        stored = json.loads(_CFG.read_text())
+        if not isinstance(stored, dict):
+            stored = {}
+    except (OSError, ValueError):
+        stored = {}
+    to_write = persistent_payload(cfg, stored)
+    if "ARCENCIEL_LINK_KEY" not in os.environ:
         for key in _SECRET_KEYS:
             secret = sanitize_legacy_secret(cfg.get(key))
-            to_write[key] = secret or ""
-
+            set_secret(key, secret)
+            if is_secure_storage_available():
+                to_write.pop(key, None)
+            else:
+                to_write[key] = secret or ""
     _write_private_json(_CFG, to_write)

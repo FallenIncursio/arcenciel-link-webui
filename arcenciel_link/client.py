@@ -2,6 +2,7 @@ import atexit
 import base64
 import json
 import logging
+import os
 import queue
 import re
 import signal
@@ -14,7 +15,7 @@ from urllib.parse import urlparse, urlunparse
 
 import websocket
 
-from . import job_attempt, setup_check
+from . import device_tools, job_attempt, setup_check
 from .config import load, save
 from .runtime_config import validate_worker_change
 from .utils import get_http_session, get_model_path, list_subfolders
@@ -393,6 +394,38 @@ def _handle_control(msg: dict):
     response = {"command": command}
     if request_id is not None:
         response["requestId"] = request_id
+    if command == "cancel_device_tool":
+        device_tools.cancel(msg, job_attempt.RUNTIME_ID)
+        return
+    if command == "device_tool":
+        from . import downloader, utils
+
+        def roots():
+            cfg = downloader._cfg
+            root = Path(cfg.get("webui_root") or os.getenv("SD_WEBUI_ROOT", Path.cwd()))
+            return utils._get_model_dirs(root)
+
+        def repair(path, digest, meta, check):
+            return device_tools.repair_missing(
+                path, digest, meta, check, SESSION, downloader._cfg.get("save_html_preview", False)
+            )
+
+        def synced(hashes):
+            downloader.KNOWN_HASHES.clear()
+            downloader.KNOWN_HASHES.update(hashes)
+
+        device_tools.start(
+            msg,
+            runtime_id=job_attempt.RUNTIME_ID,
+            session=SESSION,
+            base_url=BASE_URL,
+            headers=headers(),
+            roots=roots,
+            repair=repair,
+            sync_local=synced,
+            busy=job_attempt.ACTIVE is not None,
+        )
+        return
     if command == "setup_check":
         setup_check.start_check(
             msg,
@@ -645,11 +678,11 @@ def report_progress(job_id: int, *, progress: int = None, state: str = None, mes
 
 def push_inventory(hashes: list[str]):
     if _open_evt.is_set():
-        _sock.send(json.dumps({"type": "inventory", "hashes": hashes}))
+        _sock.send(json.dumps({"type": "inventory", "hashes": hashes, "runtimeId": job_attempt.RUNTIME_ID}))
     else:
         SESSION.post(
             f"{BASE_URL}/inventory",
-            json={"hashes": hashes},
+            json={"hashes": hashes, "runtimeId": job_attempt.RUNTIME_ID},
             headers=headers(),
             timeout=TIMEOUT,
         )

@@ -100,9 +100,9 @@ def _already_have(hash_: str | None) -> bool:
     return hash_ in KNOWN_HASHES if hash_ else False
 
 
-def _sync_inventory(hashes: list[str]) -> None:
+def _sync_inventory(hashes: list[str], force=False) -> None:
     unique_count = len(KNOWN_HASHES)
-    if len(hashes) == unique_count and KNOWN_HASHES.issuperset(hashes):
+    if not force and len(hashes) == unique_count and KNOWN_HASHES.issuperset(hashes):
         return
     KNOWN_HASHES.clear()
     KNOWN_HASHES.update(hashes)
@@ -362,16 +362,28 @@ def _worker():
             attempt.check()
             tmp_path.rename(dst_path)
 
-            # side-cars
-            preview_name = _save_preview(meta.get("preview"), dst_path)
-            _write_info_json(meta, sha_local, preview_name, dst_path)
-            if _cfg.get("save_html_preview"):
-                _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
+            sidecar_warning = False
+            try:
+                preview_name = _save_preview(meta.get("preview"), dst_path)
+                _write_info_json(meta, sha_local, preview_name, dst_path)
+                if _cfg.get("save_html_preview"):
+                    _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
+                sidecar_warning = bool(meta.get("preview") and not preview_name)
+            except job_attempt.AttemptStopped:
+                raise
+            except Exception:
+                sidecar_warning = True
 
-            # done
             hashes = update_cached_hash(dst_path, sha_local)
             _sync_inventory(hashes)
-            client.report_progress(job["id"], state="DONE", progress=100)
+            client.report_progress(
+                job["id"],
+                state="DONE",
+                progress=100,
+                message="SIDECAR_WARNING: Model saved. Repair missing metadata in Device tools."
+                if sidecar_warning
+                else None,
+            )
             _print_progress(label)
 
         except job_attempt.AttemptStopped:
@@ -414,7 +426,7 @@ def _inventory_worker():
     while True:
         try:
             hashes = list_model_hashes()
-            _sync_inventory(hashes)
+            _sync_inventory(hashes, force=True)
         except Exception:
             pass
         time.sleep(3600)

@@ -83,6 +83,24 @@ def ping() -> PlainTextResponse:
     )
 
 
+@router.get("/status")
+def device_status(request: Request):
+    from . import client, device_tools, job_attempt
+    from .version import VERSION
+
+    origin = _require_allowed_origin(request)
+    return JSONResponse(
+        {
+            "version": VERSION,
+            "connected": client._open_evt.is_set(),
+            "running": RUNNING.is_set(),
+            "runtimeId": job_attempt.RUNTIME_ID,
+            "tool": device_tools.status(),
+        },
+        headers=_build_cors_headers(origin, {"Cache-Control": "no-store"}),
+    )
+
+
 @router.options("/toggle_link")
 def toggle_link_options(request: Request) -> PlainTextResponse:
     origin = _require_allowed_origin(request)

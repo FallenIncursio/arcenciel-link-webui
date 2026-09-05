@@ -74,7 +74,7 @@ Explicit environment variables override saved desktop settings, including explic
 
 Pause/resume works during the current process. On restart, `ARCENCIEL_LINK_ENABLED` takes effect again. Changing an environment-managed key through the browser is rejected: update the runtime secret and restart the host. Existing desktop installations with valid settings need no migration. Protocol 2 and the browser toggle payload are unchanged.
 
-For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.3.0/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
+For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.4.0/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
 
 ## Configuration and security
 
@@ -136,8 +136,21 @@ Cancel interrupts the stream, hash check and retry wait, cleans this attempt's p
 If cancellation arrives after the atomic file commit, the installed model stays on disk. Legacy server compatibility
 is retained; automatic recovery requires the updated ArcEnCiel server. Keep each device on its own Link Key.
 
-## Guided setup (2.3.0)
+## Guided setup (2.4.0)
 
 Open [Link Hub](https://arcenciel.io/link) to choose your host and location, create or import a device key, and verify the setup. Local discovery runs only when requested; another computer or Google Colab connects directly without a local browser scan. Existing keys and downloads remain compatible.
 
 Workers advertise `setup_check_v1`. A setup check transfers a fixed 4 KiB file into the selected native model folder, flushes and reads it back, verifies SHA-256, and deletes the temporary file. The result is bound to one key and runtime; shared keys, paused or busy workers cannot complete the check. Stable errors explain storage, write, transfer and cleanup failures. The check does not install a model or alter download history. The `Finish setup` button appears only after verification.
+
+## Device tools (2.4.0)
+
+Select this device in [Link Hub](https://arcenciel.io/link) and open **Device tools** to scan its library, inspect its download
+subfolders or repair missing sidecars. The same actions work on another computer and in Google Colab through the outbound
+Link connection. Use a separate Link key with inventory permission for each host/runtime.
+
+Scans publish empty inventories as well as changes. Repair fills missing metadata and previews for models visible to your
+account, preserves existing sidecars and never changes model bytes. A sidecar failure after download leaves the model completed
+and shows a warning; correct permissions and retry repair. Tools show progress and support cancellation. Reconnect and start a
+new scan after a timeout; interrupted work is not replayed automatically. Upgrade and restart the host to advertise `device_tools_v1`.
+A small native Link panel shows the extension version and latest operation. Folder choices use the native download destination;
+inventories also include other configured model roots.

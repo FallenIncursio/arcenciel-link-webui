@@ -176,3 +176,40 @@ def test_cancel_interrupts_real_http_stream_before_end(tmp_path, content_length)
         server.shutdown()
         server.server_close()
         session.close()
+
+
+def test_cancel_survives_late_stale_heartbeat():
+    active = attempt().start()
+    assert job_attempt.cancel_attempt(1, active.token, job_attempt.RUNTIME_ID)
+    active.session.post.return_value = Reply(409, "DOWNLOADING")
+    with pytest.raises(job_attempt.AttemptStopped):
+        active.renew()
+    assert active.cancelled
+    active.session.post.return_value = Reply(200, "CANCELLED")
+    active.finish()
+    assert active.cancel_acknowledged
+
+
+def test_cancel_ack_retries_transient_failure_and_is_idempotent(monkeypatch):
+    monkeypatch.setattr(job_attempt.time, "sleep", lambda _: None)
+    active = attempt().start()
+    assert job_attempt.cancel_attempt(1, active.token, job_attempt.RUNTIME_ID)
+    active.session.post.reset_mock()
+    active.session.post.side_effect = [requests.ConnectionError("temporary"), Reply(503), Reply(200, "CANCELLED")]
+    active.finish()
+    active.finish()
+    assert active.session.post.call_count == 3
+    assert all(call.kwargs["json"]["attemptId"] == active.token for call in active.session.post.call_args_list)
+    assert active.cancel_acknowledged
+
+
+def test_cancel_ack_does_not_retry_revoked_credentials(monkeypatch):
+    monkeypatch.setattr(job_attempt.time, "sleep", lambda _: None)
+    active = attempt().start()
+    assert job_attempt.cancel_attempt(1, active.token, job_attempt.RUNTIME_ID)
+    active.session.post.reset_mock()
+    active.session.post.return_value = Reply(401)
+    active.finish()
+    assert active.session.post.call_count == 1
+    assert not active.cancel_acknowledged
+    assert active.cancelled

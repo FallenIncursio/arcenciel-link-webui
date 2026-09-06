@@ -24,6 +24,7 @@ class JobAttempt:
         self.finished = threading.Event()
         self.response = None
         self.cancelled = False
+        self.cancel_acknowledged = False
         self.last_confirmed = time.monotonic()
         self.bytes_downloaded = 0
 
@@ -34,11 +35,15 @@ class JobAttempt:
         if not self.token:
             return
         with self.session.post(
-            self.url, headers=self.headers(), json={**self.fields(), "action": action}, timeout=10
+            self.url,
+            headers=self.headers(),
+            json={**self.fields(), "action": action},
+            timeout=5 if action == "cancel_ack" else 10,
         ) as reply:
             if reply.status_code in (400, 401, 403, 404, 409):
                 try:
-                    self.cancelled = reply.json().get("state") == "CANCELLED"
+                    if reply.json().get("state") == "CANCELLED":
+                        self.cancelled = True
                 except ValueError:
                     pass
                 self.stop()
@@ -94,11 +99,18 @@ class JobAttempt:
     def finish(self):
         global ACTIVE
         self.finished.set()
-        if self.cancelled and self.token:
-            try:
-                self.renew("cancel_ack")
-            except Exception:
-                pass
+        if self.cancelled and self.token and not self.cancel_acknowledged:
+            for retry in range(3):
+                try:
+                    self.renew("cancel_ack")
+                    self.cancel_acknowledged = True
+                    break
+                except AttemptStopped:
+                    # Revoked credentials or a stale token cannot acknowledge another attempt.
+                    break
+                except Exception:
+                    if retry < 2:
+                        time.sleep(retry + 1)
         if ACTIVE is self:
             ACTIVE = None
 

@@ -671,6 +671,8 @@ def report_progress(job_id: int, *, progress: int = None, state: str = None, mes
             if reply.status_code == 409 and active is not None:
                 if reply.json().get("state") == "DONE" and state == "DONE":
                     return
+                if reply.json().get("state") == "CANCELLED":
+                    active.cancelled = True
                 active.stop()
                 raise job_attempt.AttemptStopped("Attempt no longer active")
             reply.raise_for_status()

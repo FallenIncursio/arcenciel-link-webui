@@ -1,40 +1,14 @@
 (() => {
-  const selectors = {
-    prompt: "#txt2img_prompt textarea",
-    negativePrompt: "#txt2img_neg_prompt textarea",
-    seed: "#txt2img_seed input[type=number]",
-    steps: "#txt2img_steps input[type=number]",
-    cfg: "#txt2img_cfg_scale input[type=number]",
-    width: "#txt2img_width input[type=number]",
-    height: "#txt2img_height input[type=number]",
-    sampler: "#txt2img_sampling input",
-    scheduler: "#txt2img_scheduler input",
-  };
-  const input = (key) => gradioApp().querySelector(selectors[key]);
-  const numeric = (key) => ["steps", "cfg", "width", "height"].includes(key);
-  async function read(keys) {
-    return Object.fromEntries(
-      keys.map((key) => {
-        const e = input(key);
-        if (!e) throw new Error(`This WebUI version does not expose ${key}.`);
-        return [key, numeric(key) ? Number(e.value) : e.value];
-      }),
-    );
-  }
-  async function apply(fields) {
+  async function rpc(action, fields, expected) {
     const incoming = gradioApp().querySelector(
-      "#aec-link-native-input textarea",
-    );
-    const submit = gradioApp().querySelector("#aec-link-native-apply");
-    const receipt = gradioApp().querySelector(
-      "#aec-link-native-receipt textarea",
-    );
+        "#aec-link-native-input textarea",
+      ),
+      submit = gradioApp().querySelector("#aec-link-native-apply"),
+      receipt = gradioApp().querySelector("#aec-link-native-receipt textarea");
     if (!incoming || !submit || !receipt)
-      throw new Error(
-        "This WebUI version does not expose the native paste integration.",
-      );
+      throw new Error("Open txt2img to receive Link settings.");
     const nonce = crypto.randomUUID();
-    incoming.value = JSON.stringify({ nonce, fields });
+    incoming.value = JSON.stringify({ nonce, action, fields, expected });
     updateInput(incoming);
     await new Promise((resolve) => setTimeout(resolve, 50));
     submit.click();
@@ -44,44 +18,62 @@
       try {
         result = JSON.parse(receipt.value);
       } catch {
-        /* Native callback pending. */
+        /* waiting for native callback */
       }
       if (result?.nonce === nonce) {
         if (!result.ok)
-          throw new Error(
-            "The native paste integration rejected an unavailable value.",
+          throw Object.assign(
+            new Error(
+              "The editor changed, is busy, or a selected option is no longer available. Check txt2img before retrying.",
+            ),
+            { unchanged: result.unchanged === true },
           );
-        return;
+        return result.values;
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     throw new Error(
-      "The native editor did not confirm the paste. Inspect the editor before retrying.",
+      "The editor did not confirm the transfer. Inspect txt2img before retrying.",
     );
   }
+  let tail = Promise.resolve();
+  const request = (...args) => {
+    const next = tail.then(() => rpc(...args));
+    tail = next.catch(() => {});
+    return next;
+  };
   const adapter = {
-    read,
-    apply,
-    async snapshot() {
-      return read(Object.keys(selectors).filter((key) => input(key)));
+    direct: true,
+    async read(keys) {
+      const all = await request("read");
+      return Object.fromEntries(
+        keys.map((key) => {
+          if (!(key in all))
+            throw new Error(`This generator does not expose ${key}.`);
+          return [key, all[key]];
+        }),
+      );
     },
-    restore: apply,
+    async apply(fields, options = {}) {
+      await request("apply", fields, options.before);
+      switch_to_txt2img();
+    },
+    snapshot: () => request("read"),
+    restore: (fields) => request("apply", fields),
     async check(fields) {
-      const values = {};
-      for (const [key, value] of Object.entries(fields)) {
-        const e = input(key);
-        let reason = !e
-          ? "This WebUI version does not expose this field."
-          : undefined;
-        if (
-          e?.type === "number" &&
-          ((e.min !== "" && Number(value) < Number(e.min)) ||
-            (e.max !== "" && Number(value) > Number(e.max)))
-        )
-          reason = `Outside the current editor range (${e.min || "unbounded"} to ${e.max || "unbounded"}).`;
-        values[key] = { before: e?.value, reason };
-      }
-      return values;
+      const all = await request("read");
+      return Object.fromEntries(
+        Object.keys(fields).map((key) => [
+          key,
+          {
+            before: all[key],
+            reason:
+              key in all
+                ? undefined
+                : "This generator does not expose this field.",
+          },
+        ]),
+      );
     },
   };
   onUiLoaded(() => {

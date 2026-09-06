@@ -3,7 +3,7 @@
 import threading
 import time
 
-from . import drafts, resources
+from . import drafts, native_fields, resources
 
 
 def build_profile():
@@ -15,7 +15,7 @@ def build_profile():
         schedulers = [s.label for s in sd_schedulers.schedulers]
     except ImportError:
         schedulers = []
-    return {
+    result = {
         "schemaVersion": 1,
         "host": "forge",
         "fields": ["prompt", "negativePrompt", "seed", "steps", "cfg", "width", "height", "sampler"]
@@ -25,6 +25,13 @@ def build_profile():
         "maxSeed": "9007199254740991",
         "templates": ["basic_checkpoint_v1"],
     }
+    if native_fields.components:
+        result["fields"] = list(native_fields.components)
+    if "modules" in result["fields"]:
+        from modules_forge import main_entry
+
+        result["options"] = {"modules": sorted(main_entry.module_list)[:256]}
+    return result
 
 
 _report_started = False

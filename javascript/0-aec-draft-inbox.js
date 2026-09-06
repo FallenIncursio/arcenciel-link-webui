@@ -11,6 +11,13 @@
     sampler: "Sampler",
     scheduler: "Scheduler",
     clipSkip: "CLIP skip",
+    shift: "Shift",
+    betaAlpha: "Beta alpha",
+    betaBeta: "Beta beta",
+    checkpoint: "Checkpoint",
+    vae: "VAE",
+    modules: "VAE / Text encoder",
+    loras: "LoRAs",
   };
   const errors = {
     DRAFT_PERMISSION_REQUIRED:
@@ -98,11 +105,37 @@
     },
     mount(container, adapter) {
       container.classList.add("aec-drafts");
-      const heading = el("h3", "Generator draft inbox");
+      const mountedAt = Date.now();
+      let dirty = false,
+        applyingDirect = false,
+        receiver = false;
+      let releaseReceiver;
+      const release = new Promise((resolve) => {
+        releaseReceiver = resolve;
+      });
+      if (adapter.direct && navigator.locks)
+        void navigator.locks.request(
+          "aec-link-direct-receiver",
+          { ifAvailable: true },
+          async (lock) => {
+            if (!lock) return;
+            receiver = true;
+            await release;
+          },
+        );
+      const edited = (event) => {
+        if (event.isTrusted && !container.contains(event.target)) dirty = true;
+      };
+      if (adapter.direct) document.addEventListener("input", edited, true);
+      const heading = el(
+        "h3",
+        adapter.direct ? "Link" : "Generator draft inbox",
+      );
       const help = el(
         "p",
         "Review image settings from Arc and choose which fields to apply in this editor. No generation starts.",
       );
+      if (adapter.direct) help.hidden = true;
       const status = el("p");
       status.setAttribute("role", "status");
       const list = el("div");
@@ -181,7 +214,7 @@
         backups,
       );
       async function refresh() {
-        if (busy) return;
+        if (busy || applyingDirect) return;
         busy = true;
         refreshButton.disabled = true;
         status.textContent = "Checking your device inbox…";
@@ -192,7 +225,27 @@
           status.textContent = data.items.length
             ? `${data.items.length} drafts · saved for up to 24 hours`
             : "No waiting drafts. Choose “Send to Link” on an image in Arc.";
-          for (const item of data.items) {
+          const incoming = data.items.filter(
+            (item) =>
+              item.state === "RECEIVED" &&
+              Date.parse(item.createdAt) >= mountedAt &&
+              !saved(item.id),
+          );
+          if (
+            adapter.direct &&
+            receiver &&
+            !document.hidden &&
+            !dirty &&
+            incoming.length === 1 &&
+            Date.parse(incoming[0].createdAt) >= mountedAt &&
+            !saved(incoming[0].id)
+          ) {
+            applyingDirect = true;
+            await review(incoming[0], { direct: true });
+          }
+          for (const item of adapter.direct
+            ? data.items.slice(0, 3)
+            : data.items) {
             const card = el("article");
             card.dataset.handoffId = item.id;
             const link = el("a", `Image #${item.imageId}`);
@@ -202,7 +255,12 @@
             card.append(link, el("p", states[item.state] || item.state));
             const actions = el("div", undefined, "aec-actions");
             if (item.state === "RECEIVED")
-              actions.append(button("Review draft", () => review(item)));
+              actions.append(
+                button(
+                  adapter.direct ? "Apply to txt2img" : "Review draft",
+                  () => review(item),
+                ),
+              );
             const receipt = saved(item.id);
             if (
               receipt?.stage === "applied" &&
@@ -361,13 +419,14 @@
               stage: "applying",
             });
             mutated = true;
-            await adapter.apply(fields, options);
+            await adapter.apply(fields, { ...options, before });
             const actual = await adapter.read(Object.keys(fields));
             if (!equal(actual, fields))
               throw new Error(
                 "The editor did not accept all selected values. The previous draft will be restored.",
               );
             const after = await adapter.snapshot();
+            if (adapter.direct) dirty = false;
             save(item.id, {
               imageId: item.imageId,
               before,
@@ -384,14 +443,14 @@
                 receipt: { fields: actual },
               });
               message.textContent =
-                "Applied in this editor. No generation started. Undo is available in the inbox.";
+                "Settings applied. Generate when you are ready. Undo is available below.";
             } catch {
               message.textContent =
                 "Applied locally; the server receipt is pending. Close and use “Confirm editor receipt”. Do not import again.";
             }
             apply.hidden = true;
           } catch (e) {
-            if (mutated) {
+            if (mutated && !e.unchanged) {
               try {
                 await adapter.restore(before);
                 save(item.id, {
@@ -425,6 +484,14 @@
             applying = false;
             cancel.disabled = false;
             if (!apply.hidden) apply.disabled = false;
+            if (options.direct) {
+              applyingDirect = false;
+              status.textContent = message.textContent;
+              if (apply.hidden && saved(item.id)?.stage === "applied") {
+                dirty = false;
+                dialog.remove();
+              } else if (!dialog.open) dialog.showModal();
+            }
             void refresh();
           }
         });
@@ -450,7 +517,7 @@
               "p",
               options.newTemplate
                 ? "This basic checkpoint workflow is intended for SD 1.x and SDXL models. Other model families and advanced stages need a matching workflow; review missing resources in Arc."
-                : "Models and advanced stages remain unchanged. Review missing resources in Arc and select a compatible model before generating.",
+                : "Verified model selections are included when available. Review any additional processing stages before generating.",
               "aec-warning",
             ),
           );
@@ -487,11 +554,26 @@
               }),
             );
         }
-        dialog.showModal();
+        if (
+          options.direct &&
+          !apply.disabled &&
+          !main.querySelector("input:disabled")
+        ) {
+          apply.click();
+        } else {
+          applyingDirect = false;
+          dialog.showModal();
+        }
       }
       void refresh();
+      const timer = setInterval(() => {
+        if (!document.hidden) void refresh();
+      }, 3000);
       return () => {
         disposed = true;
+        clearInterval(timer);
+        releaseReceiver?.();
+        document.removeEventListener("input", edited, true);
       };
     },
   };

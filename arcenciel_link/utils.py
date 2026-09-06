@@ -220,16 +220,20 @@ def list_model_hashes() -> List[str]:
         result: List[str] = []
 
         for p in _iter_model_files(webui_root):
-            mtime = int(p.stat().st_mtime)
+            stat = p.stat()
+            mtime = int(stat.st_mtime)
             key = str(p.resolve())
             entry = cache.get(key)
 
-            if entry and entry.get("mtime") == mtime:
+            if entry and entry.get("mtime_ns") == stat.st_mtime_ns and entry.get("size") == stat.st_size:
                 h = entry.get("hash")
             else:
                 log.info("hashing %s", p)
                 h = sha256_of_file(p)
-                cache[key] = {"mtime": mtime, "hash": h}
+                after = p.stat()
+                if (after.st_mtime_ns, after.st_size) != (stat.st_mtime_ns, stat.st_size):
+                    raise RuntimeError("Model changed during inventory scan")
+                cache[key] = {"mtime": mtime, "mtime_ns": stat.st_mtime_ns, "size": stat.st_size, "hash": h}
                 updated = True
 
             if h:
@@ -250,12 +254,13 @@ def list_model_hashes() -> List[str]:
 def update_cached_hash(path: Path, hash_value: str) -> List[str]:
     resolved = path.resolve()
     try:
-        mtime = int(resolved.stat().st_mtime)
+        stat = resolved.stat()
+        mtime = int(stat.st_mtime)
     except FileNotFoundError:
         return list_model_hashes()
     with _CACHE_LOCK:
         cache = _ensure_cache()
-        cache[str(resolved)] = {"mtime": mtime, "hash": hash_value}
+        cache[str(resolved)] = {"mtime": mtime, "mtime_ns": stat.st_mtime_ns, "size": stat.st_size, "hash": hash_value}
         _save_cache(cache)
 
         hashes = []

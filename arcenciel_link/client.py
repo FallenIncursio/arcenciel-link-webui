@@ -292,6 +292,9 @@ def _on_open(ws):
     _suspend_until = 0.0
     _suspend_notice_logged = False
     _set_connection_state("connected", f"[AEC-LINK] connected to {_display_target()}")
+    from . import recipe
+
+    recipe.start_reporting(__import__(__name__, fromlist=["*"]), job_attempt.RUNTIME_ID)
     _send_worker_state()
     ws.send('{"type":"poll"}')
 
@@ -413,6 +416,9 @@ def _handle_control(msg: dict):
         def synced(hashes):
             downloader.KNOWN_HASHES.clear()
             downloader.KNOWN_HASHES.update(hashes)
+            from . import resources
+
+            resources.request_refresh()
 
         device_tools.start(
             msg,

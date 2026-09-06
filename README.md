@@ -1,6 +1,28 @@
 # ArcEnCiel Link for Forge / Stable Diffusion WebUI
 
-ArcEnCiel Link sends one-click model downloads from [arcenciel.io](https://arcenciel.io) to Forge Classic and compatible Stable Diffusion WebUIs.
+ArcEnCiel Link connects [arcenciel.io](https://arcenciel.io) to Forge/WebUI: download models, review image settings in your generator, and prepare the resources they require.
+
+## Send image settings and prepare resources (2.5.0)
+
+On Arc, open an image or its metadata and choose **Send to Link**. Choose this connected device, review the
+supported settings and any adaptations, and explicitly allow drafts for this device when requested. Link never
+starts a generation. A missing connection disables the action and explains how to reconnect.
+
+**Prepare resources** checks full SHA-256 identities, native model types and exact selection names. Confirm the
+listed downloads before they are queued. Existing transfers are reused, and stopping a plan preserves shared
+requests and installed files. Unknown names, short hashes and external-only resources require explicit selection
+or manual installation; similar names are not assumed to be the same model. Refresh the inventory after installing
+files manually. Files deleted or changed since their last scan are checked again before a download can be skipped. Preparing files does not install nodes, load weights or change the editor's model selection.
+The Link Hub **Resources** tab shows plans and their progress. A completed download is ready only when its native
+loader recognizes it. Base-family mismatches and complex workflows still require local review.
+
+Open the native **Link inbox**, review a received draft, then apply the supported settings. The editor retains a
+backup first and reads values back before acknowledging success. Undo is available while the imported settings
+remain unchanged; otherwise export the backup to preserve subsequent edits. Use one key per runtime. A restarted
+runtime does not silently apply an older draft or start a resource plan approved for another runtime.
+
+In Forge/WebUI, open the Arc en Ciel Link tab and its inbox. Drafts fill supported txt2img controls and retain the
+previous values. Choose model resources using the exact names shown in Arc; unsupported settings stay untouched.
 
 ## Version 2.3
 
@@ -74,7 +96,7 @@ Explicit environment variables override saved desktop settings, including explic
 
 Pause/resume works during the current process. On restart, `ARCENCIEL_LINK_ENABLED` takes effect again. Changing an environment-managed key through the browser is rejected: update the runtime secret and restart the host. Existing desktop installations with valid settings need no migration. Protocol 2 and the browser toggle payload are unchanged.
 
-For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.4.2/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
+For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.5.0/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
 
 ## Configuration and security
 

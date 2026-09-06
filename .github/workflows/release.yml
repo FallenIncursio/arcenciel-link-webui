@@ -30,7 +30,19 @@ jobs:
       - name: Package extension
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: zip -r "arcenciel-link-forge-${RELEASE_TAG}.zip" arcenciel_link scripts notebooks install.py requirements.txt README.md LICENSE pyproject.toml -x "*/__pycache__/*" "*.pyc"
+        run: zip -r "arcenciel-link-forge-${RELEASE_TAG}.zip" arcenciel_link javascript scripts notebooks install.py requirements.txt README.md LICENSE pyproject.toml -x "*/__pycache__/*" "*.pyc"
+      - name: Verify native editor assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PYCODE'
+          import os, zipfile
+          with zipfile.ZipFile(f"arcenciel-link-forge-{os.environ['RELEASE_TAG']}.zip") as package:
+              required = {"javascript/0-aec-draft-inbox.js", "javascript/aec-draft-adapter.js", "arcenciel_link/drafts.py", "arcenciel_link/resources.py"}
+              missing = required.difference(package.namelist())
+              if missing:
+                  raise SystemExit(f"Missing native editor files: {sorted(missing)}")
+          PYCODE
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

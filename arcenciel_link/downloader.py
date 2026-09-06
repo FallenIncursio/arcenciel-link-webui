@@ -97,7 +97,9 @@ def _print_progress(label: str, pct: int | None = None, last=[-1]):
 
 
 def _already_have(hash_: str | None) -> bool:
-    return hash_ in KNOWN_HASHES if hash_ else False
+    from .resources import has_verified_file
+
+    return has_verified_file(hash_)
 
 
 def _sync_inventory(hashes: list[str], force=False) -> None:
@@ -379,6 +381,9 @@ def _worker():
             except Exception:
                 sidecar_warning = True
 
+            from . import resources
+
+            resources.request_refresh()
             hashes = update_cached_hash(dst_path, sha_local)
             _sync_inventory(hashes)
             client.report_progress(

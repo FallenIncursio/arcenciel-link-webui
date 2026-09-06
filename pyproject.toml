@@ -1,7 +1,7 @@
 [project]
 name = "arcenciel-link-forge"
 description = "ArcEnCiel Link worker integration for Forge and compatible Stable Diffusion WebUIs."
-version = "2.4.2"
+version = "2.5.0"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -32,3 +32,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.setuptools.data-files]
+"javascript" = ["javascript/0-aec-draft-inbox.js", "javascript/aec-draft-adapter.js"]

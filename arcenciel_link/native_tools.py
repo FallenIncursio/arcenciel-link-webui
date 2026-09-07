@@ -29,7 +29,7 @@ def register():
 
         from . import native_fields
 
-        if not native_fields.bridge:
+        if not native_fields.bridge or native_fields.bridge.get("configured"):
             return []
         try:
             from modules import infotext_utils as paste
@@ -55,7 +55,7 @@ def register():
         if "modules" in components:
             # Forge Neo uses the VAE/text encoder selector; the legacy sd_vae option is inert.
             components.pop("vae", None)
-        native_fields.components = components
+        ui_id = native_fields.ui_id
         settings = {
             "betaAlpha": "beta_dist_alpha",
             "betaBeta": "beta_dist_beta",
@@ -79,21 +79,31 @@ def register():
         def import_values(raw, *current):
             unchanged = [gr.skip() for _ in components]
             nonce = None
+            code = "NATIVE_VALIDATION_FAILED"
+            field = None
             try:
                 payload = json.loads(raw)
                 nonce = payload.get("nonce")
+                if payload.get("uiId") != ui_id:
+                    code = "EDITOR_STALE"
+                    raise ValueError(code)
                 before = values(current)
                 if payload.get("action") == "read":
                     return [*unchanged, json.dumps({"nonce": nonce, "ok": True, "values": before})]
+                if payload.get("action") != "apply":
+                    raise ValueError("Unsupported editor action")
                 if getattr(shared.state, "job_count", 0) > 0:
+                    code = "GENERATOR_BUSY"
                     raise ValueError("Wait for the current generation")
                 if payload.get("expected") is not None and payload["expected"] != before:
+                    code = "EDITOR_CHANGED"
                     raise ValueError("The editor changed before import")
                 fields = payload["fields"]
                 if not isinstance(fields, dict) or not fields or set(fields) - components.keys():
                     raise ValueError("Unsupported native field")
                 updates = {}
                 for name, value in fields.items():
+                    field = name
                     component = components[name]
                     if name == "modules":
                         value = json.loads(value)
@@ -155,20 +165,43 @@ def register():
                     json.dumps({"nonce": nonce, "ok": True}),
                 ]
             except Exception:
-                return [*unchanged, json.dumps({"nonce": nonce, "ok": False, "unchanged": True})]
+                return [
+                    *unchanged,
+                    json.dumps({"nonce": nonce, "ok": False, "unchanged": True, "code": code, "field": field}),
+                ]
 
-        with demo:
-            native_fields.bridge["button"].click(
-                fn=import_values,
-                inputs=[native_fields.bridge["incoming"], *components.values()],
-                outputs=[*components.values(), native_fields.bridge["receipt"]],
-                queue=False,
-            )
-        demo.config = demo.get_config_file()
+        # Register while the final Blocks is being built, after quicksettings and
+        # txt2img have rendered. Every initial browser config/session includes it.
+        import inspect
+
+        js_key = "js" if "js" in inspect.signature(native_fields.bridge["button"].click).parameters else "_js"
+        event = native_fields.bridge["button"].click(
+            fn=import_values,
+            inputs=[native_fields.bridge["incoming"], *components.values()],
+            outputs=[*components.values(), native_fields.bridge["receipt"]],
+            queue=False,
+            preprocess=False,
+            show_progress="hidden",
+            api_name=False,
+            **{js_key: "(...args) => [window.AECLinkNative.take(), ...args.slice(1)]"},
+        )
+        event.then(
+            fn=None,
+            inputs=[native_fields.bridge["receipt"]],
+            outputs=None,
+            queue=False,
+            show_progress="hidden",
+            **{js_key: "(receipt) => { window.AECLinkNative.deliver(receipt); }"},
+        )
+        native_fields.components = components
+        native_fields.bridge["configured"] = True
+
+    def after_component(component, **kwargs):
+        native_fields.record(component, **kwargs)
+        if getattr(component, "elem_id", None) == "footer":
+            configure_editor(gr.context.Context.root_block)
 
     def native_routes(_demo, app):
-        if _demo is not None:
-            configure_editor(_demo)
         from fastapi import Depends, HTTPException, Request
         from fastapi.responses import JSONResponse
 
@@ -186,6 +219,15 @@ def register():
                 or request.headers.get("sec-fetch-site") != "same-origin"
             ):
                 raise HTTPException(status_code=403, detail="Native editor required")
+            if action == "status":
+                return JSONResponse(
+                    {
+                        "ready": bool(native_fields.bridge.get("configured")),
+                        "uiId": native_fields.ui_id,
+                        "version": VERSION,
+                    },
+                    headers={"Cache-Control": "no-store"},
+                )
             raw = await request.body()
             if len(raw) > 100_000:
                 raise HTTPException(status_code=413, detail="Draft event too large")
@@ -201,5 +243,6 @@ def register():
 
     from . import native_fields
 
-    script_callbacks.on_after_component(native_fields.record)
+    script_callbacks.on_before_ui(native_fields.reset)
+    script_callbacks.on_after_component(after_component)
     script_callbacks.on_app_started(native_routes)

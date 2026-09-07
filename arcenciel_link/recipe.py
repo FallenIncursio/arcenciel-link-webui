@@ -18,15 +18,12 @@ def build_profile():
     result = {
         "schemaVersion": 1,
         "host": "forge",
-        "fields": ["prompt", "negativePrompt", "seed", "steps", "cfg", "width", "height", "sampler"]
-        + (["scheduler"] if schedulers else []),
+        "fields": list(native_fields.components),
         "samplers": [s.name for s in sd_samplers.all_samplers],
         "schedulers": schedulers,
         "maxSeed": "9007199254740991",
         "templates": ["basic_checkpoint_v1"],
     }
-    if native_fields.components:
-        result["fields"] = list(native_fields.components)
     if "modules" in result["fields"]:
         from modules_forge import main_entry
 
@@ -60,7 +57,11 @@ def start_reporting(client, runtime_id):
                         timeout=15,
                     ) as response:
                         response.raise_for_status()
-                    REPORT_STATE = "Recipe check ready"
+                    REPORT_STATE = (
+                        "Host fields available; editor checked in browser"
+                        if profile["fields"]
+                        else "Waiting for editor setup"
+                    )
                     try:
                         resources.report(client, runtime_id)
                     except Exception:

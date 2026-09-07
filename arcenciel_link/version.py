@@ -1,4 +1,4 @@
-VERSION = "2.5.1"
+VERSION = "2.5.2"
 PROTOCOL_VERSION = 2
 CAPABILITIES = (
     "private_download_grant_v1",

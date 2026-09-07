@@ -21,6 +21,18 @@ IDS = {
 registered = {}
 components = {}
 bridge = {}
+ui_id = None
+
+
+def reset():
+    """A UI restart must not reuse components or callbacks from the previous Blocks."""
+    global ui_id
+    from uuid import uuid4
+
+    registered.clear()
+    components.clear()
+    bridge.clear()
+    ui_id = str(uuid4())
 
 
 def record(component, **_kwargs):

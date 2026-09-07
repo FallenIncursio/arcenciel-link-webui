@@ -1,5 +1,7 @@
 """Keep the receiving editor inside txt2img; no additional navigation tab."""
 
+import json
+
 import gradio as gr
 from modules import scripts, shared
 
@@ -16,6 +18,8 @@ class Script(scripts.Script):
     def ui(self, is_img2img):
         if is_img2img:
             return []
+        if native_fields.ui_id is None:
+            native_fields.reset()
         gr.HTML('<div id="aec-link-draft-inbox"></div>')
         native_fields.bridge["root"] = gr.context.Context.root_block
         native_fields.bridge["incoming"] = gr.Textbox(
@@ -25,7 +29,9 @@ class Script(scripts.Script):
             "Apply Link settings", elem_id="aec-link-native-apply", elem_classes=["aec-link-internal"]
         )
         native_fields.bridge["receipt"] = gr.Textbox(
-            elem_id="aec-link-native-receipt", elem_classes=["aec-link-internal"]
+            value=json.dumps({"uiId": native_fields.ui_id, "protocol": 2}),
+            elem_id="aec-link-native-receipt",
+            elem_classes=["aec-link-internal"],
         )
         gr.HTML("<style>.aec-link-internal {display:none !important}</style>")
         for key, setting in [("betaAlpha", "beta_dist_alpha"), ("betaBeta", "beta_dist_beta")]:

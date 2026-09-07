@@ -101,6 +101,40 @@
   };
   const adapter = {
     direct: true,
+    accordion: true,
+    status({ waiting, ready, needsAttention }) {
+      const accordion = gradioApp().querySelector("#aec-link-inbox-accordion");
+      const header = accordion?.querySelector(".label-wrap");
+      if (!header) return;
+      let badge = header.querySelector(".aec-inbox-summary");
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "aec-inbox-summary";
+        header.insertBefore(badge, header.querySelector(".icon"));
+      }
+      badge.textContent = `${waiting} waiting · ${needsAttention ? "Needs attention" : ready ? "Connected" : "Checking"}`;
+      badge.style.cssText =
+        "font-size:12px;margin-inline-start:auto;margin-inline-end:12px;opacity:.8";
+      if (!accordion.dataset.aecRemembered) {
+        accordion.dataset.aecRemembered = "1";
+        const open = () => header.classList.contains("open");
+        try {
+          if (localStorage.getItem("aec-link-inbox-open") === "true" && !open())
+            header.click();
+        } catch {
+          /* Optional. */
+        }
+        header.addEventListener("click", () =>
+          setTimeout(() => {
+            try {
+              localStorage.setItem("aec-link-inbox-open", String(open()));
+            } catch {
+              /* Optional. */
+            }
+          }, 0),
+        );
+      }
+    },
     isEditorInput(target) {
       return !!target?.closest?.(
         "#txt2img_prompt, #txt2img_neg_prompt, #txt2img_seed, #txt2img_steps, #txt2img_cfg_scale, #txt2img_width, #txt2img_height, #txt2img_sampling, #txt2img_scheduler, #txt2img_distilled_cfg_scale, #setting_sd_model_checkpoint, #setting_sd_modules, #setting_sd_vae, #setting_CLIP_stop_at_last_layers, #setting_beta_dist_alpha, #setting_beta_dist_beta",

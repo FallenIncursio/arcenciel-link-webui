@@ -2,16 +2,13 @@
 
 ArcEnCiel Link connects [arcenciel.io](https://arcenciel.io) to Forge/WebUI: download models, review image settings in your generator, and prepare the resources they require.
 
-## Reliable native inbox (2.5.2)
+## Reliable native inbox (2.5.3)
 
-The compact inbox stays inside txt2img on Forge. Waiting drafts, history and backups are separated;
-connection checks explain recovery steps without resending a draft. The receiving tab recovers after
-closing another tab; **Receive here** can request ownership. Existing generator edits require review.
-Native imports are registered before the first browser session starts and confirmed through actual
-editor values. Use **Check connection** after a temporary failure, or **Reload Forge** after a UI restart.
-Update the extension, restart its host, and reload existing browser tabs. Downloads remain compatible.
+The compact inbox is a collapsible native txt2img accordion. Its header shows connection status and
+waiting drafts. Nothing applies until you confirm it. History combines server entries and local backups;
+Undo is available on the same row, with export/removal in **More**. Local-only backups remain reachable.
 
-## Send image settings and prepare resources (2.5.2)
+## Send image settings and prepare resources (2.5.3)
 
 Use **Send to Link** on an Arc image or in its metadata to check the original settings against this
 host. Unambiguous Steps, CFG, seed, size and sampling settings remain transferable when the image also
@@ -19,10 +16,10 @@ uses ADetailer or Hires; additional stages have their own compatibility warnings
 use the native catalog name, including renamed LoRAs and their recorded strengths. Missing or ambiguous
 resources remain visible before sending.
 
-New transfers arrive directly in **txt2img**, with no additional Link tab. Keep that editor open; a
-new transfer applies after confirmation in Arc when the receiving tab has not been edited. Existing
-pending transfers and edited tabs show **Apply to txt2img**. One browser tab receives automatically.
-The previous settings are saved locally and **Undo** restores them if no later edit was made.
+New transfers arrive in **txt2img**, with no additional Link tab. Choose **Apply to txt2img**, review
+fields and resource switches, then confirm. **Keep my resources** preserves your checkpoint, modules
+and local LoRA tags while importing the selected image settings. Existing settings are saved for Undo.
+Checkpoint and module changes update Forge's native loading plan; weights load on your next generation.
 Shift, Beta scheduler parameters and VAE/text encoder modules are supported when the host exposes them.
 
 Sending settings never starts generation. Device draft permission is controlled in the Arc Link Hub;
@@ -101,7 +98,7 @@ Explicit environment variables override saved desktop settings, including explic
 
 Pause/resume works during the current process. On restart, `ARCENCIEL_LINK_ENABLED` takes effect again. Changing an environment-managed key through the browser is rejected: update the runtime secret and restart the host. Existing desktop installations with valid settings need no migration. Protocol 2 and the browser toggle payload are unchanged.
 
-For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.5.2/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
+For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.5.3/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
 
 ## Configuration and security
 

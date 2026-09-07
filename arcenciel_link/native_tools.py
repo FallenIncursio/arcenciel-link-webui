@@ -73,7 +73,19 @@ def register():
                 elif key == "seed":
                     result[key] = str(int(result[key]))
                 elif key == "checkpoint":
-                    result[key] = result[key] or ""
+                    result[key] = result[key] or getattr(shared.opts, "sd_model_checkpoint", "") or ""
+                    if not result[key]:
+                        # Forge can select a startup model before its quicksetting has
+                        # any value. Back up the actual native selection, not a blank.
+                        from modules import sd_models
+
+                        info = getattr(sd_models.model_data, "forge_loading_parameters", {}).get("checkpoint_info")
+                        if info is not None:
+                            result[key] = (
+                                info.short_title
+                                if getattr(shared.opts, "sd_checkpoint_dropdown_use_short", False)
+                                else info.name
+                            )
             return result
 
         def import_values(raw, *current):
@@ -81,6 +93,8 @@ def register():
             nonce = None
             code = "NATIVE_VALIDATION_FAILED"
             field = None
+            locked = False
+            queue_lock = None
             try:
                 payload = json.loads(raw)
                 nonce = payload.get("nonce")
@@ -92,7 +106,17 @@ def register():
                     return [*unchanged, json.dumps({"nonce": nonce, "ok": True, "values": before})]
                 if payload.get("action") != "apply":
                     raise ValueError("Unsupported editor action")
-                if getattr(shared.state, "job_count", 0) > 0:
+                try:
+                    from modules_forge import main_entry as forge_entry
+                except ImportError:
+                    forge_entry = None
+                # A1111 option callbacks acquire their own generation lock. Forge's
+                # native setters do not, so protect its combined transaction here.
+                if forge_entry is not None:
+                    from modules.call_queue import queue_lock
+
+                    locked = queue_lock.acquire(blocking=False)
+                if (forge_entry is not None and not locked) or getattr(shared.state, "job_count", 0) > 0:
                     code = "GENERATOR_BUSY"
                     raise ValueError("Wait for the current generation")
                 if payload.get("expected") is not None and payload["expected"] != before:
@@ -120,6 +144,19 @@ def register():
                         if name == "checkpoint":
                             catalog, _ = resources.native_catalog(False)
                             choices = [n for kind, n, _ in catalog if kind == "checkpoint"]
+                            # Forge adds a hash to a title after first loading it. A snapshot
+                            # can retain that exact native title while a later draft uses
+                            # the catalog's filename. Both identify the registered file.
+                            from pathlib import Path
+
+                            from modules import sd_models
+
+                            files = {path.resolve() for kind, _, path in catalog if kind == "checkpoint"}
+                            for info in sd_models.checkpoints_list.values():
+                                if Path(info.filename).resolve() in files:
+                                    choices.extend(
+                                        getattr(info, alias, "") for alias in ("title", "short_title", "name")
+                                    )
                             # A saved current selection may use another native display alias.
                             choices += [getattr(shared.opts, "sd_model_checkpoint", ""), ""]
                         if choices and value not in [c[1] if isinstance(c, (list, tuple)) else c for c in choices]:
@@ -138,6 +175,9 @@ def register():
                     key: getattr(shared.opts, key, None)
                     for key in [*settings.values(), "sd_model_checkpoint", "forge_additional_modules"]
                 }
+                from .model_selection import ModelSelection
+
+                model_selection = ModelSelection()
                 try:
                     if "checkpoint" in updates or "modules" in updates:
                         try:
@@ -145,6 +185,7 @@ def register():
                         except ImportError:
                             main_entry = None
                         if "checkpoint" in updates:
+                            field = "checkpoint"
                             if updates["checkpoint"] == "":
                                 shared.opts.data["sd_model_checkpoint"] = ""
                             elif main_entry:
@@ -152,13 +193,19 @@ def register():
                             else:
                                 shared.opts.set("sd_model_checkpoint", updates["checkpoint"])
                         if "modules" in updates:
+                            field = "modules"
                             main_entry.modules_change(updates["modules"], None, save=False, refresh=False)
+                        # Checkpoint and modules must reach the same native loading state.
+                        # Refresh even when Forge's setters returned early: 2.5.2 may have
+                        # left the option already changed while its loader still uses A.
+                        model_selection.refresh()
                     for key, setting in settings.items():
                         if key in updates:
                             shared.opts.set(setting, updates[key])
                 except Exception:
                     for key, value in previous_options.items():
                         shared.opts.data[key] = value
+                    model_selection.restore()
                     raise
                 return [
                     *[gr.update(value=updates[key]) if key in updates else gr.skip() for key in components],
@@ -169,6 +216,10 @@ def register():
                     *unchanged,
                     json.dumps({"nonce": nonce, "ok": False, "unchanged": True, "code": code, "field": field}),
                 ]
+
+            finally:
+                if locked:
+                    queue_lock.release()
 
         # Register while the final Blocks is being built, after quicksettings and
         # txt2img have rendered. Every initial browser config/session includes it.

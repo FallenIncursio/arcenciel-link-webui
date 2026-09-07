@@ -17,6 +17,7 @@ def build_profile():
         schedulers = []
     result = {
         "schemaVersion": 1,
+        "draftSelection": 1,
         "host": "forge",
         "fields": list(native_fields.components),
         "samplers": [s.name for s in sd_samplers.all_samplers],

@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-RELEASE = "v2.5.2"
+RELEASE = "v2.5.3"
 BASE_URL = "https://link.arcenciel.io/api/link"
 HOSTS = {
     "webui": ("launch.py", "extensions/arcenciel-link-webui", "arcenciel-link-webui"),

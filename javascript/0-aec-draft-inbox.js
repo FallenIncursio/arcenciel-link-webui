@@ -31,6 +31,10 @@
     HANDOFF_NOT_PENDING:
       "This draft has already been handled. Refresh the inbox.",
     HANDOFF_EXPIRED: "This draft expired. Send a new draft from Arc.",
+    DRAFT_UPDATE_REQUIRED:
+      "Update Link to use resource selection and confirm this draft.",
+    INVALID_RESOURCE_SELECTION:
+      "This resource was excluded when sending. Keep it excluded or send a new draft.",
     LINK_INBOX_UNAVAILABLE:
       "The Link inbox is temporarily unavailable. Retry after reconnecting.",
   };
@@ -40,6 +44,9 @@
     APPLIED: "Applied",
     UNDONE: "Previous draft restored",
     FAILED: "Import failed",
+    CANCELLED: "Cancelled",
+    EXPIRED: "Expired",
+    INVALIDATED: "Previous runtime · inspect your editor",
   };
   const el = (tag, text, className) => {
     const n = document.createElement(tag);
@@ -79,6 +86,29 @@
     return n;
   };
   const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const equalFields = (a, b) =>
+    equal(Object.entries(a).sort(), Object.entries(b).sort());
+  function resourceFields(fields, selection, before = {}, forge = false) {
+    const result = { ...fields };
+    if (!selection.checkpoint) delete result.checkpoint;
+    if (!selection.modules) {
+      delete result.modules;
+      delete result.vae;
+    }
+    if (!selection.loras) {
+      delete result.loras;
+      for (const name of ["prompt", "negativePrompt"]) {
+        if (typeof result[name] !== "string") continue;
+        const tokens = () => /<(?:lora|lyco):[^<>\r\n]+>/gi;
+        const text = result[name].replace(tokens(), "").trim();
+        const kept = forge
+          ? [...new Set((before[name] || "").match(tokens()) || [])]
+          : [];
+        result[name] = [text, ...kept].filter(Boolean).join(" ");
+      }
+    }
+    return result;
+  }
   const editorId = crypto.randomUUID();
   function save(id, data) {
     try {
@@ -123,6 +153,12 @@
 @media(max-width:600px){.aec-drafts .aec-full-label{display:none}.aec-drafts .aec-short-label{display:inline}.aec-drafts button{min-height:44px}.aec-drafts .aec-card{align-items:flex-start;flex-wrap:wrap}.aec-drafts .aec-card>.aec-actions{width:100%}.aec-drafts .aec-card>.aec-actions>button:first-child{flex:1}.aec-drafts .aec-toolbar{align-items:flex-start}.aec-drafts .aec-title{gap:6px}.aec-drafts .aec-list{max-height:360px}.aec-draft-modal .aec-draft-footer button{flex:1}}
 `,
   );
+  style.textContent += `
+.aec-resource-selection{border:1px solid var(--block-border-color,#475569);border-radius:10px;padding:12px;display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.aec-resource-selection legend{font-weight:600}.aec-resource-selection label{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 8px}.aec-resource-selection p{width:100%;font-size:.85em;opacity:.75}
+.aec-history-actions summary{cursor:pointer;min-height:44px;display:flex;align-items:center;padding:0 10px}.aec-history-actions[open]{max-width:100%}.aec-history-actions>.aec-actions{flex-wrap:wrap}.aec-history-actions button{min-height:44px}
+#aec-link-draft-inbox.aec-drafts{border:0;padding:8px}.aec-resource-selection input{width:18px;height:18px}
+`;
   if (!document.getElementById("aec-link-draft-style")) {
     style.id = "aec-link-draft-style";
     document.head.append(style);
@@ -151,13 +187,7 @@
     },
     mount(container, adapter) {
       container.classList.add("aec-drafts");
-      let initialIds;
-      let dirty = false,
-        applyingDirect = false,
-        receiver = false,
-        locking = false;
-      let releaseReceiver,
-        busy = false,
+      let busy = false,
         disposed = false,
         reviewing = false;
       let items = [],
@@ -166,23 +196,8 @@
         ready = !adapter.ready,
         readinessError,
         lastCheck = 0;
-      let lastRendered = "",
-        lastSnapshot,
-        baseline;
-      const attempts = new Set(),
-        reports = new Map();
-      let yieldUntil = 0;
-      const channel =
-        adapter.direct && typeof BroadcastChannel === "function"
-          ? new BroadcastChannel("aec-link-receiver")
-          : null;
-      if (channel)
-        channel.onmessage = ({ data }) => {
-          if (data?.type !== "receive" || !receiver) return;
-          if (applyingDirect || reviewing) return;
-          yieldUntil = Date.now() + 10000;
-          releaseReceiver?.();
-        };
+      let lastRendered = "";
+      const reports = new Map();
       const toolbar = el("div", undefined, "aec-toolbar");
       const title = el("div", undefined, "aec-title");
       const badge = el(
@@ -190,22 +205,11 @@
         adapter.ready ? "Checking editor…" : "Review in this editor",
         "aec-connection",
       );
-      title.append(icon("link"), el("h3", "Link inbox"), badge);
-      const controls = el("div", undefined, "aec-actions");
-      const receiverButton = button(
-        "Receive here",
-        () => {
-          yieldUntil = 0;
-          channel?.postMessage({ type: "receive" });
-          notice(
-            "Requesting automatic receiving in this tab. A transfer already in progress will finish first.",
-          );
-          void acquire();
-          void refresh();
-        },
-        "apply",
+      title.append(
+        ...(adapter.accordion ? [] : [icon("link"), el("h3", "Link inbox")]),
+        badge,
       );
-      receiverButton.hidden = !adapter.direct;
+      const controls = el("div", undefined, "aec-actions");
       const refreshButton = button(
         "Check connection",
         () => {
@@ -220,7 +224,7 @@
         "refresh",
       );
       reloadButton.hidden = true;
-      controls.append(receiverButton, refreshButton, reloadButton);
+      controls.append(refreshButton, reloadButton);
       toolbar.append(title, controls);
       const status = el("p", undefined, "aec-notice");
       status.setAttribute("role", "status");
@@ -248,10 +252,6 @@
         render();
       });
       more.classList.add("aec-more");
-      const backups = el("details", undefined, "aec-backups");
-      backups.append(el("summary", "Backups & recovery"));
-      const backupList = el("div");
-      backups.append(backupList);
       function notice(message, failure = false) {
         status.textContent = message;
         status.dataset.error = String(failure);
@@ -268,137 +268,33 @@
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
-      backups.addEventListener("toggle", () => {
-        if (!backups.open) return;
-        backupList.replaceChildren(
-          el(
-            "p",
-            "Backups are kept in this browser tab. Export one to keep it after closing the tab.",
-          ),
-        );
-        let count = 0;
+      function localRows() {
+        const local = [];
         try {
           for (let n = 0; n < sessionStorage.length; n++) {
             const key = sessionStorage.key(n);
             if (!key?.startsWith("aec-link-draft:")) continue;
             const id = key.slice(15),
               data = saved(id);
-            if (!data?.before) continue;
-            count++;
-            const row = el("article");
-            row.append(
-              el(
-                "p",
-                `Image #${data.imageId} · ${new Date(data.savedAt).toLocaleString()}`,
-              ),
-              el(
-                "p",
-                data.stage === "applied"
-                  ? "Applied · previous settings saved"
-                  : data.stage === "applying"
-                    ? "Confirmation missing · inspect the editor"
-                    : "Previous settings saved",
-              ),
-            );
-            const actions = el("div", undefined, "aec-actions");
-            const remove = button(
-              "Remove backup",
-              () => {
-                if (remove.dataset.confirm !== "true") {
-                  remove.dataset.confirm = "true";
-                  remove.textContent = "Confirm removal";
-                  return;
-                }
-                sessionStorage.removeItem(key);
-                row.remove();
-                render();
-              },
-              "close",
-            );
-            remove.disabled = data.stage === "applying";
-            actions.append(
-              button("Export backup", () => exportBackup(id, data), "backup"),
-              remove,
-            );
-            row.append(actions);
-            backupList.append(row);
+            if (data?.before && !items.some((i) => i.id === id))
+              local.push({
+                id,
+                imageId: data.imageId,
+                createdAt: data.savedAt,
+                state: "LOCAL",
+                localOnly: true,
+              });
           }
         } catch {
-          backupList.append(
-            el(
-              "p",
-              "Browser storage is unavailable. Allow session storage before applying a draft.",
-            ),
-          );
+          /* Applying reports storage errors before replacing anything. */
         }
-        if (!count) backupList.append(el("p", "No local backups yet."));
-      });
-      container.replaceChildren(
-        toolbar,
-        status,
-        hint,
-        tabs,
-        list,
-        more,
-        backups,
-      );
-      async function acquire() {
-        if (
-          !adapter.direct ||
-          !navigator.locks ||
-          disposed ||
-          document.hidden ||
-          receiver ||
-          locking ||
-          Date.now() < yieldUntil
-        )
-          return;
-        locking = true;
-        try {
-          await navigator.locks.request(
-            "aec-link-direct-receiver",
-            { ifAvailable: true },
-            async (lock) => {
-              if (!lock || document.hidden || disposed) return;
-              receiver = true;
-              render();
-              await new Promise((resolve) => {
-                releaseReceiver = resolve;
-              });
-              receiver = false;
-              releaseReceiver = undefined;
-              if (!disposed) render();
-            },
-          );
-        } finally {
-          locking = false;
-        }
+        return local;
       }
+      container.replaceChildren(toolbar, status, hint, tabs, list, more);
       const visibility = () => {
-        if (document.hidden && !applyingDirect) releaseReceiver?.();
-        else {
-          void acquire();
-          void refresh();
-        }
+        if (!document.hidden) void refresh();
       };
-      const edited = (event) => {
-        if (
-          event.isTrusted &&
-          !container.contains(event.target) &&
-          adapter.isEditorInput?.(event.target)
-        ) {
-          dirty = true;
-          render();
-        }
-      };
-      if (adapter.direct) {
-        document.addEventListener("input", edited, true);
-        document.addEventListener("change", edited, true);
-        document.addEventListener("visibilitychange", visibility);
-      }
-      const onPageHide = () => releaseReceiver?.();
-      window.addEventListener("pagehide", onPageHide);
-      void acquire();
+      document.addEventListener("visibilitychange", visibility);
       async function report(item, code) {
         if (!item || item.state !== "RECEIVED") return;
         const previous = reports.get(item.id);
@@ -417,24 +313,11 @@
         }
       }
       function reason(item) {
+        if (item.localOnly)
+          return "Saved in this browser tab · server entry unavailable";
         if (item.state !== "RECEIVED") return states[item.state] || item.state;
         if (readinessError) return readinessError.message;
-        if (!ready) return "Checking the Forge editor…";
-        if (saved(item.id)?.stage === "applying")
-          return "Confirmation missing · inspect the editor before retrying";
-        if (items.some((i) => i.state === "CLAIMED"))
-          return "Another transfer awaits confirmation · check its outcome before continuing";
-        if (attempts.has(item.id))
-          return "Needs attention · review and retry this draft";
-        if (adapter.direct && dirty)
-          return "Your txt2img settings changed · review before applying";
-        if (adapter.direct && !receiver)
-          return "Automatic receiving is active in another tab, or unavailable here";
-        if (initialIds?.has(item.id))
-          return "Waiting from an earlier session · review to apply";
-        if (items.filter((i) => i.state === "RECEIVED").length > 1)
-          return "Multiple drafts waiting · choose one to apply";
-        return adapter.direct ? "Ready for txt2img" : "Ready to review";
+        return ready ? "Waiting for your confirmation" : "Checking the editor…";
       }
       async function cancelItem(item, control) {
         control.disabled = true;
@@ -459,23 +342,23 @@
           ? "Editor needs attention"
           : !ready
             ? "Checking editor…"
-            : adapter.direct
-              ? receiver
-                ? "Receiving in this tab"
-                : "Manual receiving"
-              : "Editor connected";
+            : "Editor connected";
         badge.dataset.ready = String(ready);
-        receiverButton.hidden = !adapter.direct || receiver;
         reloadButton.hidden = readinessError?.code !== "EDITOR_STALE";
-        hint.textContent = adapter.direct
-          ? "Image settings arrive here. Generation starts when you choose Generate."
-          : "Review image settings from Arc and apply them in this editor.";
+        hint.textContent =
+          "Received drafts wait for your confirmation. Nothing is applied or generated automatically.";
         const waiting = items.filter((i) =>
           ["RECEIVED", "CLAIMED"].includes(i.state),
         );
-        const history = items.filter(
-          (i) => !["RECEIVED", "CLAIMED"].includes(i.state),
-        );
+        const history = [
+          ...items.filter((i) => !["RECEIVED", "CLAIMED"].includes(i.state)),
+          ...localRows(),
+        ].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+        adapter.status?.({
+          waiting: waiting.length,
+          ready,
+          needsAttention: Boolean(readinessError),
+        });
         waitingButton.textContent = `Waiting (${waiting.length})`;
         historyButton.replaceChildren(
           icon("clock"),
@@ -489,7 +372,13 @@
         );
         const signature =
           JSON.stringify(
-            visible.map((i) => [i.id, i.state, reason(i), saved(i.id)?.stage]),
+            visible.map((i) => [
+              i.id,
+              i.state,
+              reason(i),
+              saved(i.id)?.stage,
+              Boolean(saved(i.id)?.before),
+            ]),
           ) + view;
         more.hidden = (view === "waiting" ? waiting : history).length <= limit;
         if (signature === lastRendered) return;
@@ -630,8 +519,6 @@
                         "The editor did not confirm the restored values. Keep your backup.",
                       );
                     save(item.id, { ...receipt, stage: "undone" });
-                    baseline = receipt.before;
-                    dirty = false;
                     await window.AECLinkDrafts.request("event", {
                       id: item.id,
                       editorId: receipt.editorId,
@@ -647,10 +534,36 @@
               ),
             );
           }
-          if (receipt?.before)
-            actions.append(
-              button("Backup", () => exportBackup(item.id, receipt), "backup"),
+          if (receipt?.before) {
+            const menu = el("details", undefined, "aec-history-actions");
+            menu.append(el("summary", "More"));
+            const group = el("div", undefined, "aec-actions");
+            const remove = button(
+              "Remove backup",
+              () => {
+                if (remove.dataset.confirm !== "true") {
+                  remove.dataset.confirm = "true";
+                  remove.textContent = "Remove backup and Undo?";
+                  return;
+                }
+                sessionStorage.removeItem(`aec-link-draft:${item.id}`);
+                lastRendered = "";
+                render();
+              },
+              "close",
             );
+            remove.disabled = receipt.stage === "applying";
+            group.append(
+              button(
+                "Export backup",
+                () => exportBackup(item.id, receipt),
+                "backup",
+              ),
+              remove,
+            );
+            menu.append(group);
+            actions.append(menu);
+          }
           card.append(main, actions);
           return card;
         });
@@ -676,7 +589,7 @@
         }
       }
       async function refresh(manual = false) {
-        if (busy || applyingDirect || reviewing || disposed) return;
+        if (busy || reviewing || disposed) return;
         busy = true;
         if (manual) refreshButton.disabled = true;
         try {
@@ -688,9 +601,7 @@
           ) {
             lastCheck = Date.now();
             try {
-              lastSnapshot = await adapter.ready();
-              if (baseline === undefined) baseline = lastSnapshot;
-              if (dirty && equal(lastSnapshot, baseline)) dirty = false;
+              await adapter.ready();
               ready = true;
               readinessError = undefined;
             } catch (e) {
@@ -703,52 +614,19 @@
           });
           if (disposed) return;
           items = data.items;
-          initialIds ??= new Set(items.map((item) => item.id));
           render();
           const pending = items.filter((i) => i.state === "RECEIVED");
-          if (receiver || !adapter.direct) {
-            const code =
-              readinessError?.code ||
-              (!ready
-                ? "BRIDGE_NOT_READY"
-                : dirty
-                  ? "EDITOR_CHANGED"
-                  : pending.length !== 1
-                    ? "WAITING_FOR_REVIEW"
-                    : "EDITOR_READY");
-            await Promise.all(
-              pending.map((item) =>
-                report(
-                  item,
-                  initialIds?.has(item.id) && !readinessError
-                    ? "WAITING_FOR_REVIEW"
-                    : code,
-                ),
-              ),
-            );
-          }
+          await Promise.all(
+            pending.map((item) =>
+              report(item, readinessError?.code || "WAITING_FOR_REVIEW"),
+            ),
+          );
           if (manual)
             notice(
               readinessError?.message ||
                 "Inbox refreshed. Your current draft is preserved.",
               !!readinessError,
             );
-          if (
-            adapter.direct &&
-            ready &&
-            receiver &&
-            !document.hidden &&
-            !dirty &&
-            pending.length === 1 &&
-            !items.some((i) => i.state === "CLAIMED") &&
-            !initialIds.has(pending[0].id) &&
-            !saved(pending[0].id) &&
-            !attempts.has(pending[0].id)
-          ) {
-            applyingDirect = true;
-            attempts.add(pending[0].id);
-            await review(pending[0], { direct: true });
-          }
         } catch (e) {
           if (!disposed) notice(e.message, true);
         } finally {
@@ -760,7 +638,6 @@
       async function review(item, options = {}) {
         if (reviewing) return;
         reviewing = true;
-        attempts.add(item.id);
         const focus = document.activeElement;
         const dialog = el("dialog", undefined, "aec-draft-modal aec-drafts");
         dialog.setAttribute("aria-label", "Review Link draft");
@@ -781,7 +658,6 @@
           dialog.close();
           dialog.remove();
           reviewing = false;
-          applyingDirect = false;
           void refresh();
           focus?.focus({ preventScroll: true });
         };
@@ -792,11 +668,10 @@
         const cancel = button("Close", close, "close");
         const apply = button("Save previous draft & apply", async () => {
           if (applying) return;
-          const fields = Object.fromEntries(
-            [...main.querySelectorAll("input:checked")].map((input) => [
-              input.value,
-              item.payload.fields[input.value],
-            ]),
+          let fields = Object.fromEntries(
+            [...main.querySelectorAll("[data-field] input:checked")].map(
+              (input) => [input.value, item.payload.fields[input.value]],
+            ),
           );
           if (!Object.keys(fields).length) {
             message.textContent = "Select at least one available field.";
@@ -809,10 +684,6 @@
             mutated = false,
             nativeApplied = false;
           try {
-            if (options.direct && (document.hidden || dirty || !receiver))
-              throw new Error(
-                "The receiving editor changed. Review this draft before applying.",
-              );
             if (!equal(await adapter.snapshot(), before))
               throw new Error(
                 "Your editor changed. Close and review this draft again.",
@@ -830,12 +701,44 @@
               editorId,
               stage: "prepared",
             });
-            await window.AECLinkDrafts.request("event", {
+            const expectedFields = resourceFields(
+              fields,
+              selection,
+              before,
+              adapter.direct,
+            );
+            if (!Object.keys(expectedFields).length)
+              throw new Error("Select at least one field to apply.");
+            const claim = await window.AECLinkDrafts.request("event", {
               id: item.id,
               editorId,
               action: "claim",
               fields: Object.keys(fields),
+              ...(selectionEnabled
+                ? {
+                    resourceSelection: selection,
+                    ...(adapter.direct && !selection.loras
+                      ? {
+                          localPrompts: {
+                            prompt: before.prompt || "",
+                            negativePrompt: before.negativePrompt || "",
+                          },
+                        }
+                      : {}),
+                  }
+                : {}),
             });
+            claimed = true;
+            if (selectionEnabled) {
+              if (
+                !claim.receipt?.fields ||
+                !equalFields(claim.receipt.fields, expectedFields)
+              )
+                throw new Error(
+                  "The server did not confirm the resource selection. Update Link before applying.",
+                );
+              fields = claim.receipt.fields;
+            }
             claimed = true;
             if (!equal(await adapter.snapshot(), before))
               throw new Error(
@@ -852,13 +755,11 @@
             await adapter.apply(fields, { ...options, before });
             nativeApplied = true;
             const actual = await adapter.read(Object.keys(fields));
-            if (!equal(actual, fields))
+            if (!equalFields(actual, fields))
               throw new Error(
                 "The editor did not accept all selected values. The previous draft will be restored.",
               );
             const after = await adapter.snapshot();
-            baseline = after;
-            if (adapter.direct) dirty = false;
             save(item.id, {
               imageId: item.imageId,
               before,
@@ -875,7 +776,7 @@
                 receipt: { fields: actual },
               });
               message.textContent =
-                "Settings applied. Generate when you are ready. Undo is available below.";
+                "Settings applied for your next generation. Undo is available in History.";
             } catch {
               message.textContent =
                 "Applied locally; the server receipt is pending. Close and use “Confirm editor receipt”. Do not import again.";
@@ -932,16 +833,6 @@
             applying = false;
             cancel.disabled = false;
             if (!apply.hidden) apply.disabled = false;
-            if (options.direct) {
-              applyingDirect = false;
-              if (document.hidden) releaseReceiver?.();
-              notice(message.textContent, saved(item.id)?.stage !== "applied");
-              if (apply.hidden && saved(item.id)?.stage === "applied") {
-                dirty = false;
-                dialog.remove();
-                reviewing = false;
-              } else if (!dialog.open) dialog.showModal();
-            }
             void refresh();
           }
         });
@@ -951,9 +842,11 @@
         footer.append(apply, cancel);
         dialog.append(header, main, message, footer);
         document.body.append(dialog);
-        let before;
+        let before,
+          selectionEnabled = false;
+        let selection = { checkpoint: true, loras: true, modules: true };
         main.append(el("p", "Checking this draft and your editor…"));
-        if (!options.direct) dialog.showModal();
+        dialog.showModal();
         try {
           const response = await window.AECLinkDrafts.request("inbox", {
             id: item.id,
@@ -966,15 +859,60 @@
             );
           item = fresh;
           before = await adapter.snapshot();
-          if (options.direct && !equal(before, baseline)) {
-            dirty = true;
-            options.direct = false;
-            applyingDirect = false;
-            message.textContent =
-              "Your txt2img settings changed. Review before applying this draft.";
-            await report(item, "EDITOR_CHANGED");
-          }
           main.replaceChildren();
+          selectionEnabled = item.payload.profile?.draftSelection === 1;
+          selection = {
+            ...(item.payload.resourceSelection || {
+              checkpoint: true,
+              loras: true,
+              modules: true,
+            }),
+          };
+          const resourceControls = el(
+            "fieldset",
+            undefined,
+            "aec-resource-selection",
+          );
+          if (selectionEnabled) {
+            resourceControls.append(el("legend", "Resources from this image"));
+            for (const [key, title] of Object.entries({
+              checkpoint: "Checkpoint",
+              loras: "LoRAs",
+              modules: "VAE / Text encoder",
+            })) {
+              const label = el("label"),
+                input = el("input");
+              input.type = "checkbox";
+              input.checked = selection[key];
+              input.disabled = !selection[key];
+              input.setAttribute("aria-label", `Use image ${title}`);
+              input.addEventListener("change", () => {
+                selection[key] = input.checked;
+                updatePreview();
+              });
+              label.append(input, el("span", title));
+              resourceControls.append(label);
+              input.dataset.resource = key;
+            }
+            resourceControls.append(
+              button("Keep my resources", () => {
+                for (const input of resourceControls.querySelectorAll(
+                  "input",
+                )) {
+                  input.checked = false;
+                  selection[input.dataset.resource] = false;
+                }
+                updatePreview();
+              }),
+            );
+            resourceControls.append(
+              el(
+                "p",
+                "Excluded image resources leave your current selection unchanged. LoRA tags already in this Forge editor are kept.",
+              ),
+            );
+            main.append(resourceControls);
+          }
           const checks = await adapter.check(item.payload.fields, options);
           if (closed || disposed) return;
           if (options.newTemplate)
@@ -1013,12 +951,17 @@
                 `Before: ${checks[name]?.before ?? "(not available)"}`,
                 "aec-before",
               ),
-              el("pre", `After: ${value === "" ? "(empty)" : value}`),
+              el(
+                "pre",
+                `After: ${value === "" ? "(empty)" : value}`,
+                "aec-after",
+              ),
             );
             if (checks[name]?.reason)
               card.append(el("p", checks[name].reason, "aec-warning"));
             main.append(card);
           }
+          updatePreview();
           apply.disabled = false;
         } catch (e) {
           if (closed || disposed) return;
@@ -1050,34 +993,36 @@
               }),
             );
         }
-        if (
-          options.direct &&
-          !apply.disabled &&
-          !main.querySelector("input:disabled")
-        ) {
-          apply.click();
-        } else {
-          applyingDirect = false;
-          if (!dialog.open) dialog.showModal();
+        if (!dialog.open && !closed) dialog.showModal();
+        function updatePreview() {
+          if (!item.payload) return;
+          const effective = resourceFields(
+            item.payload.fields,
+            selection,
+            before,
+            adapter.direct,
+          );
+          for (const row of main.querySelectorAll("[data-field]")) {
+            const name = row.dataset.field;
+            const output = row.querySelector(".aec-after");
+            output.textContent =
+              name in effective
+                ? `After: ${effective[name] === "" ? "(empty)" : effective[name]}`
+                : "Keep current selection";
+          }
         }
       }
       render();
       void refresh();
       const timer = setInterval(() => {
         if (!document.hidden) {
-          void acquire();
           void refresh();
         }
       }, 3000);
       return () => {
         disposed = true;
         clearInterval(timer);
-        releaseReceiver?.();
-        document.removeEventListener("input", edited, true);
-        document.removeEventListener("change", edited, true);
         document.removeEventListener("visibilitychange", visibility);
-        window.removeEventListener("pagehide", onPageHide);
-        channel?.close();
       };
     },
   };

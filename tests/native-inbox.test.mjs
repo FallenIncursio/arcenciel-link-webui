@@ -15,7 +15,10 @@ before(async () => {
 after(async () => {
   await browser?.close();
 });
-async function fixture(t, { old = false, fail = false } = {}) {
+async function fixture(
+  t,
+  { old = false, fail = false, selection = false } = {},
+) {
   const context = await browser.newContext();
   t.after(() => context.close());
   const rows = [],
@@ -28,6 +31,18 @@ async function fixture(t, { old = false, fail = false } = {}) {
       state: "RECEIVED",
       payload: { fields: { prompt: "from Arc", steps: 24 }, warnings: [] },
     };
+    if (selection)
+      row.payload = {
+        profile: { host: "forge", draftSelection: 1 },
+        resourceSelection: { checkpoint: true, loras: true, modules: true },
+        fields: {
+          prompt: "portrait <lora:image:1>",
+          steps: 24,
+          checkpoint: "B",
+          modules: '["vae-B"]',
+        },
+        warnings: [],
+      };
     rows.push(row);
     return row;
   };
@@ -58,6 +73,18 @@ async function fixture(t, { old = false, fail = false } = {}) {
             json: { code: "HANDOFF_NOT_PENDING" },
           });
         row.state = "CLAIMED";
+        row.receipt = {
+          fields: Object.fromEntries(
+            data.fields.map((k) => [k, row.payload.fields[k]]),
+          ),
+        };
+        if (
+          selection &&
+          Object.values(data.resourceSelection).every((v) => v === false)
+        )
+          row.receipt = {
+            fields: { prompt: "portrait <lora:local:0.5>", steps: 24 },
+          };
       }
       if (data.action === "applied") row.state = "APPLIED";
       if (data.action === "undone") row.state = "UNDONE";
@@ -75,12 +102,18 @@ async function fixture(t, { old = false, fail = false } = {}) {
     await page.goto("http://127.0.0.1:18998/");
     await page.addScriptTag({ content: source });
     await page.evaluate(
-      ({ fail }) => {
+      ({ fail, selection }) => {
         window.native = {
           values: { prompt: "original", steps: 20 },
           fail,
           applies: 0,
         };
+        if (selection)
+          Object.assign(window.native.values, {
+            prompt: "my work <lora:local:0.5>",
+            checkpoint: "A",
+            modules: '["vae-A"]',
+          });
         const snapshot = () => {
           if (window.native.fail)
             throw Object.assign(
@@ -131,7 +164,7 @@ async function fixture(t, { old = false, fail = false } = {}) {
           },
         );
       },
-      { fail },
+      { fail, selection },
     );
     await page.waitForFunction(
       () =>
@@ -150,184 +183,212 @@ async function until(fn, message) {
   }
   throw new Error(message);
 }
-test("fresh transfer applies once, preserves backup and undo; unrelated inputs do not block", async (t) => {
-  const f = await fixture(t),
-    p = await f.open();
-  await p.getByLabel("Search").fill("searching");
-  const row = f.add();
-  await until(() => row.state === "APPLIED", "not automatically applied");
-  assert.equal(await p.evaluate(() => window.native.applies), 1);
-  await until(
-    () => p.getByRole("button", { name: "Undo", exact: true }).isVisible(),
-    "undo unavailable",
-  );
-  await p.getByRole("button", { name: "Undo", exact: true }).click();
-  await until(() => row.state === "UNDONE", "undo not acknowledged");
-  assert.deepEqual(await p.evaluate(() => window.native.values), {
-    prompt: "original",
-    steps: 20,
-  });
-  assert.equal(await p.getByRole("dialog").count(), 0);
-});
-test("generation edits and multiple pending drafts remain explicit choices, all entries accessible", async (t) => {
-  const f = await fixture(t),
-    p = await f.open();
-  await p.getByLabel("Prompt", { exact: true }).fill("keep new work");
-  for (let i = 0; i < 8; i++) f.add();
-  await p
-    .getByRole("button", { name: "Check connection", exact: true })
-    .click();
-  await until(
-    () => p.getByText("Waiting (8)", { exact: true }).isVisible(),
-    "missing pending count",
-  );
-  assert(f.rows.every((r) => r.state === "RECEIVED"));
-  assert.equal(
-    await p.getByLabel("Prompt", { exact: true }).inputValue(),
-    "keep new work",
-  );
-  assert.equal(await p.locator("[data-handoff-id]").count(), 5);
-  await p.getByRole("button", { name: "Show more" }).click();
-  assert.equal(await p.locator("[data-handoff-id]").count(), 8);
-  await p
-    .locator("[data-handoff-id]")
-    .first()
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
-  await until(() => f.rows[0].state === "CANCELLED", "cancel not persisted");
-});
-test("a waiting tab takes over after the receiving tab closes", async (t) => {
-  const f = await fixture(t),
-    first = await f.open();
-  await until(
-    () => first.getByText("Receiving in this tab", { exact: true }).isVisible(),
-    "first not receiver",
-  );
-  const second = await f.open();
-  await until(
-    () => second.getByText("Manual receiving", { exact: true }).isVisible(),
-    "second incorrectly owns receiver",
-  );
-  await first.close();
-  await until(
-    () =>
-      second.getByText("Receiving in this tab", { exact: true }).isVisible(),
-    "receiver did not recover",
-  );
-  const row = f.add();
-  await until(() => row.state === "APPLIED", "new receiver did not apply");
-});
-test("connection failure is reported without claiming and the same draft can recover", async (t) => {
-  const f = await fixture(t, { old: true, fail: true }),
-    row = f.add(),
-    p = await f.open();
-  await until(
-    () =>
-      f.events.some(
-        (e) => e.action === "diagnostic" && e.receipt.code === "EDITOR_TIMEOUT",
-      ),
-    "diagnostic not reported",
-  );
-  assert.equal(row.state, "RECEIVED");
-  assert(
-    await p
-      .getByRole("button", { name: "Apply to txt2img", exact: true })
-      .isDisabled(),
-  );
-  await p.evaluate(() => {
-    window.native.fail = false;
-  });
-  await p
-    .getByRole("button", { name: "Check connection", exact: true })
-    .click();
-  await p
+async function apply(p, row) {
+  const card = p.locator(`[data-handoff-id="${row.id}"]`);
+  await card
     .getByRole("button", { name: "Apply to txt2img", exact: true })
     .click();
-  await p.getByRole("button", { name: "Save previous draft & apply" }).click();
-  await until(() => row.state === "APPLIED", "same draft not recovered");
-  assert.equal(f.events.filter((e) => e.action === "claim").length, 1);
-});
-test("compact inbox fits mobile and unchanged polls preserve focused actions", async (t) => {
-  const f = await fixture(t, { old: true }),
-    row = f.add(),
-    p = await f.open();
-  await p.setViewportSize({ width: 360, height: 800 });
-  const apply = p.getByRole("button", {
-    name: "Apply to txt2img",
-    exact: true,
-  });
-  await apply.waitFor();
-  await apply.focus();
-  await p.waitForTimeout(3500);
-  assert(await apply.evaluate((e) => document.activeElement === e));
-  assert.equal(row.state, "RECEIVED");
-  assert(
-    await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-  );
-  assert((await apply.boundingBox()).height >= 44);
-});
-
-test("a new arrival does not depend on the computer clock matching the server", async (t) => {
+  const dialog = p.getByRole("dialog", { name: "Review Link draft" });
+  await dialog
+    .getByRole("button", { name: "Save previous draft & apply" })
+    .click();
+  await dialog
+    .getByText(
+      "Settings applied for your next generation. Undo is available in History.",
+      { exact: true },
+    )
+    .waitFor();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+}
+test("fresh arrivals stay untouched until an explicit confirmation; apply and undo work", async (t) => {
   const f = await fixture(t),
     p = await f.open(),
     row = f.add();
-  row.createdAt = "2020-01-01T00:00:00Z";
-  await until(
-    () => row.state === "APPLIED",
-    "clock skew blocked fresh delivery",
-  );
-  assert.equal(await p.evaluate(() => window.native.applies), 1);
-});
-test("native changes made through another control are checked before automatic replacement", async (t) => {
-  const f = await fixture(t),
-    p = await f.open();
-  await p.evaluate(() => {
-    window.native.values.steps = 42;
-  });
-  const row = f.add();
-  await until(
-    () => p.getByRole("dialog").isVisible(),
-    "changed native state was not reviewed",
-  );
+  await p.getByText("Waiting for your confirmation", { exact: true }).waitFor();
+  await p.waitForTimeout(6500);
   assert.equal(row.state, "RECEIVED");
-  assert.equal(await p.evaluate(() => window.native.applies), 0);
-});
-test("Receive here transfers ownership without closing the first tab", async (t) => {
-  const f = await fixture(t),
-    first = await f.open(),
-    second = await f.open();
-  await second
-    .getByRole("button", { name: "Receive here", exact: true })
-    .click();
-  await until(
-    () =>
-      second.getByText("Receiving in this tab", { exact: true }).isVisible(),
-    "explicit ownership request failed",
+  assert.equal(await p.evaluate(() => native.applies), 0);
+  assert.equal(
+    f.events.some((e) => e.action === "claim"),
+    false,
   );
-  assert(
-    await first.getByText("Manual receiving", { exact: true }).isVisible(),
+  await apply(p, row);
+  assert.equal(row.state, "APPLIED");
+  assert.equal(await p.evaluate(() => native.applies), 1);
+  assert.equal(
+    await p.getByText("Backups & recovery", { exact: true }).count(),
+    0,
   );
+  assert.equal(await p.locator(`[data-handoff-id="${row.id}"]`).count(), 1);
+  await p.getByRole("button", { name: "Undo", exact: true }).click();
+  await until(() => row.state === "UNDONE", "Undo missing");
+  assert.deepEqual(await p.evaluate(() => native.values), {
+    prompt: "original",
+    steps: 20,
+  });
 });
-
-test("lost readback retains an uncertain claim and reconciles without applying twice", async (t) => {
+test("older drafts, additional tabs and refreshing cannot apply automatically", async (t) => {
   const f = await fixture(t, { old: true }),
     row = f.add(),
-    p = await f.open();
-  await p.evaluate(() => {
-    window.native.failReadback = true;
-  });
+    p = await f.open(),
+    other = await f.open();
   await p
+    .getByRole("button", { name: "Check connection", exact: true })
+    .click();
+  await other.bringToFront();
+  await other.waitForTimeout(6500);
+  assert.equal(row.state, "RECEIVED");
+  assert.equal(
+    f.events.some((e) => e.action === "claim"),
+    false,
+  );
+  await apply(other, row);
+  assert.equal(row.state, "APPLIED");
+});
+test("closing the review keeps the editor intact; concurrent edits block replacement", async (t) => {
+  const f = await fixture(t),
+    p = await f.open(),
+    row = f.add();
+  const card = p.locator(`[data-handoff-id="${row.id}"]`);
+  await card
     .getByRole("button", { name: "Apply to txt2img", exact: true })
     .click();
-  await p.getByRole("button", { name: "Save previous draft & apply" }).click();
-  await p.getByText(/Forge's confirmation is missing/).waitFor();
+  const d = p.getByRole("dialog");
+  await d
+    .getByRole("button", { name: "Save previous draft & apply" })
+    .waitFor();
+  await p.evaluate(() => (native.values.prompt = "new work"));
+  await d.getByRole("button", { name: "Save previous draft & apply" }).click();
+  await d
+    .getByText("Your editor changed. Close and review this draft again.", {
+      exact: true,
+    })
+    .waitFor();
+  assert.equal(row.state, "RECEIVED");
+  assert.equal(await p.evaluate(() => native.applies), 0);
+  await d.getByRole("button", { name: "Close", exact: true }).click();
+});
+test("pending entries can be cancelled and pagination keeps every entry reachable", async (t) => {
+  const f = await fixture(t),
+    p = await f.open();
+  for (let i = 0; i < 8; i++) f.add();
+  await p.getByRole("button", { name: "Show more", exact: true }).click();
+  assert.equal(await p.locator("[data-handoff-id]").count(), 8);
+  await p
+    .locator("[data-handoff-id]")
+    .last()
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await until(() => f.rows[7].state === "CANCELLED", "Cancel missing");
+  assert.equal(
+    f.events.some((e) => e.action === "claim"),
+    false,
+  );
+});
+test("orphaned local backups stay available once in History and can be exported or removed", async (t) => {
+  const f = await fixture(t),
+    p = await f.open();
+  await p.evaluate(() =>
+    sessionStorage.setItem(
+      "aec-link-draft:orphan",
+      JSON.stringify({
+        imageId: 4,
+        before: { prompt: "saved" },
+        savedAt: new Date().toISOString(),
+        stage: "applied",
+      }),
+    ),
+  );
+  await p.getByRole("button", { name: /^History/ }).click();
+  const c = p.locator('[data-handoff-id="orphan"]');
+  await c
+    .getByText("Saved in this browser tab · server entry unavailable", {
+      exact: true,
+    })
+    .waitFor();
+  await c.locator("summary").click();
+  await c.getByRole("button", { name: "Export backup", exact: true }).waitFor();
+  await c.getByRole("button", { name: "Remove backup", exact: true }).click();
+  await c
+    .getByRole("button", { name: "Remove backup and Undo?", exact: true })
+    .click();
+  await c.waitFor({ state: "hidden" });
+});
+test("unconfirmed writes retain their claim and recovery verifies without another apply", async (t) => {
+  const f = await fixture(t),
+    p = await f.open(),
+    row = f.add();
+  await p.evaluate(() => (native.failReadback = true));
+  await p
+    .locator(`[data-handoff-id="${row.id}"]`)
+    .getByRole("button", { name: "Apply to txt2img", exact: true })
+    .click();
+  const d = p.getByRole("dialog");
+  await d.getByRole("button", { name: "Save previous draft & apply" }).click();
+  await d.getByText(/Forge's confirmation is missing/).waitFor();
+  await d.getByRole("button", { name: "Close", exact: true }).click();
   assert.equal(row.state, "CLAIMED");
-  assert.equal(await p.evaluate(() => window.native.applies), 1);
-  await p.getByRole("button", { name: "Close", exact: true }).click();
-  await p.evaluate(() => {
-    window.native.failReadback = false;
-  });
+  await p.evaluate(() => (native.failReadback = false));
   await p.getByRole("button", { name: "Check outcome", exact: true }).click();
-  await until(() => row.state === "APPLIED", "outcome did not reconcile");
-  assert.equal(await p.evaluate(() => window.native.applies), 1);
+  await until(() => row.state === "APPLIED", "Recovery missing");
+  assert.equal(await p.evaluate(() => native.applies), 1);
+});
+test("mobile controls remain reachable and polling preserves focus", async (t) => {
+  const f = await fixture(t),
+    p = await f.open();
+  await p.setViewportSize({ width: 390, height: 850 });
+  const row = f.add();
+  const button = p
+    .locator(`[data-handoff-id="${row.id}"]`)
+    .getByRole("button", { name: "Apply to txt2img", exact: true });
+  await button.waitFor();
+  await button.focus();
+  await p.waitForTimeout(3500);
+  assert.equal(
+    await button.evaluate((b) => document.activeElement === b),
+    true,
+  );
+  assert.ok((await button.boundingBox()).height >= 44);
+  assert.ok(
+    await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+  );
+  assert.equal(row.state, "RECEIVED");
+});
+
+test("resource confirmation preserves native checkpoint, modules and local prompt LoRAs", async (t) => {
+  const f = await fixture(t, { selection: true }),
+    p = await f.open(),
+    row = f.add();
+  await p
+    .locator(`[data-handoff-id="${row.id}"]`)
+    .getByRole("button", { name: "Apply to txt2img", exact: true })
+    .click();
+  const d = p.getByRole("dialog");
+  await d
+    .getByRole("button", { name: "Keep my resources", exact: true })
+    .click();
+  await d
+    .getByText("After: portrait <lora:local:0.5>", { exact: true })
+    .waitFor();
+  await d.getByRole("button", { name: "Save previous draft & apply" }).click();
+  await d
+    .getByText(
+      "Settings applied for your next generation. Undo is available in History.",
+      { exact: true },
+    )
+    .waitFor();
+  assert.deepEqual(await p.evaluate(() => native.values), {
+    prompt: "portrait <lora:local:0.5>",
+    steps: 24,
+    checkpoint: "A",
+    modules: '["vae-A"]',
+  });
+  assert.equal(row.state, "APPLIED");
+  const claim = f.events.find((e) => e.action === "claim");
+  assert.deepEqual(claim.resourceSelection, {
+    checkpoint: false,
+    loras: false,
+    modules: false,
+  });
+  assert.equal(claim.localPrompts.prompt, "my work <lora:local:0.5>");
 });

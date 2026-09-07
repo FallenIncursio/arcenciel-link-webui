@@ -6,7 +6,11 @@ def post(client, runtime_id, action, body):
         return {"code": "INVALID_NATIVE_ACTION"}, 400
     if not client._open_evt.is_set():
         return {"code": "WORKER_OFFLINE"}, 409
-    allowed = {"id", "editorId", "action", "fields", "receipt"} if action == "event" else {"receiveOnly", "id"}
+    allowed = (
+        {"id", "editorId", "action", "fields", "receipt", "resourceSelection", "localPrompts"}
+        if action == "event"
+        else {"receiveOnly", "id"}
+    )
     if set(body) - allowed:
         return {"code": "INVALID_NATIVE_PAYLOAD"}, 400
     try:

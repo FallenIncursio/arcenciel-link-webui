@@ -38,7 +38,7 @@ jobs:
           python - <<'PYCODE'
           import os, zipfile
           with zipfile.ZipFile(f"arcenciel-link-forge-{os.environ['RELEASE_TAG']}.zip") as package:
-              required = {"javascript/0-aec-draft-inbox.js", "javascript/aec-draft-adapter.js", "arcenciel_link/drafts.py", "arcenciel_link/resources.py", "arcenciel_link/native_fields.py", "scripts/arcenciel_drafts.py"}
+              required = {"javascript/0-aec-draft-inbox.js", "javascript/aec-draft-adapter.js", "arcenciel_link/drafts.py", "arcenciel_link/resources.py", "arcenciel_link/native_fields.py", "arcenciel_link/model_selection.py", "scripts/arcenciel_drafts.py"}
               missing = required.difference(package.namelist())
               if missing:
                   raise SystemExit(f"Missing native editor files: {sorted(missing)}")

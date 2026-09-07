@@ -257,6 +257,10 @@ test("closing the review keeps the editor intact; concurrent edits block replace
   await d
     .getByRole("button", { name: "Save previous draft & apply" })
     .waitFor();
+  // The review button exists while its native snapshot is still loading.
+  await p.waitForFunction(
+    () => !document.querySelector(".aec-draft-modal .aec-primary").disabled,
+  );
   await p.evaluate(() => (native.values.prompt = "new work"));
   await d.getByRole("button", { name: "Save previous draft & apply" }).click();
   await d

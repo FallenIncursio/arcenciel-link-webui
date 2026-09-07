@@ -155,7 +155,7 @@
   );
   style.textContent += `
 .aec-resource-selection{border:1px solid var(--block-border-color,#475569);border-radius:10px;padding:12px;display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
-.aec-resource-selection legend{font-weight:600}.aec-resource-selection label{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 8px}.aec-resource-selection p{width:100%;font-size:.85em;opacity:.75}
+.aec-draft-modal .aec-resource-selection{grid-column:1/-1}.aec-resource-selection legend{font-weight:600}.aec-resource-selection label{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 8px}.aec-resource-selection p{width:100%;font-size:.85em;opacity:.75}
 .aec-history-actions summary{cursor:pointer;min-height:44px;display:flex;align-items:center;padding:0 10px}.aec-history-actions[open]{max-width:100%}.aec-history-actions>.aec-actions{flex-wrap:wrap}.aec-history-actions button{min-height:44px}
 #aec-link-draft-inbox.aec-drafts{border:0;padding:8px}.aec-resource-selection input{width:18px;height:18px}
 `;
@@ -895,20 +895,29 @@
               input.dataset.resource = key;
             }
             resourceControls.append(
-              button("Keep my resources", () => {
-                for (const input of resourceControls.querySelectorAll(
-                  "input",
-                )) {
-                  input.checked = false;
-                  selection[input.dataset.resource] = false;
-                }
-                updatePreview();
-              }),
+              button(
+                options.newTemplate
+                  ? "Exclude image resources"
+                  : "Keep my resources",
+                () => {
+                  for (const input of resourceControls.querySelectorAll(
+                    "input",
+                  )) {
+                    input.checked = false;
+                    selection[input.dataset.resource] = false;
+                  }
+                  updatePreview();
+                },
+              ),
             );
             resourceControls.append(
               el(
                 "p",
-                "Excluded image resources leave your current selection unchanged. LoRA tags already in this Forge editor are kept.",
+                options.newTemplate
+                  ? "Excluded resources use the new workflow's defaults. Your previous workflow is saved for Undo."
+                  : adapter.direct
+                    ? "Excluded image resources leave your current selection unchanged. LoRA tags already in this Forge editor are kept."
+                    : "Excluded image resources leave your current model and LoRA selections unchanged.",
               ),
             );
             main.append(resourceControls);
@@ -930,7 +939,7 @@
               "p",
               options.newTemplate
                 ? "This basic checkpoint workflow is intended for SD 1.x and SDXL models. Other model families and advanced stages need a matching workflow; review missing resources in Arc."
-                : "Verified model selections are included when available. Review any additional processing stages before generating.",
+                : "Only checked settings are transferred. Review additional processing stages before generating.",
               "aec-warning",
             ),
           );

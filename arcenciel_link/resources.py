@@ -79,6 +79,10 @@ def native_catalog(refresh):
 def collect():
     refresh = _dirty.is_set()
     _dirty.clear()
+    cache_dirty = getattr(utils, "_MODEL_CATALOG_DIRTY", None)
+    if cache_dirty is not None and cache_dirty.is_set():
+        refresh = True
+        cache_dirty.clear()
     catalog, roots = native_catalog(refresh)
     with utils._CACHE_LOCK:
         cache = dict(utils._ensure_cache())
@@ -113,9 +117,10 @@ def collect():
             digest = (
                 entry.get("hash")
                 if (entry.get("mtime_ns"), entry.get("size")) == (stat.st_mtime_ns, stat.st_size)
+                and (entry.get("schema") != 2 or entry.get("ctime_ns") == stat.st_ctime_ns)
                 else None
             )
-            if not digest and cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+            if not entry and cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
                 digest = cached[2]
             if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
                 complete = False

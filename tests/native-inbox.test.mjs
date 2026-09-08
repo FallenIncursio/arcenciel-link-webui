@@ -194,7 +194,7 @@ async function apply(p, row) {
     .click();
   await dialog
     .getByText(
-      "Settings applied for your next generation. Undo is available in History.",
+      "Settings applied for your next generation. Your waiting drafts stay here.",
       { exact: true },
     )
     .waitFor();
@@ -219,7 +219,14 @@ test("fresh arrivals stay untouched until an explicit confirmation; apply and un
     await p.getByText("Backups & recovery", { exact: true }).count(),
     0,
   );
-  assert.equal(await p.locator(`[data-handoff-id="${row.id}"]`).count(), 1);
+  assert.equal(await p.locator(`[data-handoff-id="${row.id}"]`).count(), 0);
+  assert.equal(
+    await p
+      .getByRole("button", { name: "Waiting (0)", exact: true })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  await p.getByRole("button", { name: "Open history", exact: true }).waitFor();
   await p.getByRole("button", { name: "Undo", exact: true }).click();
   await until(() => row.state === "UNDONE", "Undo missing");
   assert.deepEqual(await p.evaluate(() => native.values), {
@@ -377,7 +384,7 @@ test("resource confirmation preserves native checkpoint, modules and local promp
   await d.getByRole("button", { name: "Save previous draft & apply" }).click();
   await d
     .getByText(
-      "Settings applied for your next generation. Undo is available in History.",
+      "Settings applied for your next generation. Your waiting drafts stay here.",
       { exact: true },
     )
     .waitFor();
@@ -395,4 +402,39 @@ test("resource confirmation preserves native checkpoint, modules and local promp
     modules: false,
   });
   assert.equal(claim.localPrompts.prompt, "my work <lora:local:0.5>");
+});
+
+test("applying keeps remaining waiting drafts and history changes only on request", async (t) => {
+  const f = await fixture(t),
+    p = await f.open(),
+    first = f.add(),
+    second = f.add();
+  await p
+    .getByRole("heading", { name: "Arc en Ciel Link", exact: true })
+    .waitFor();
+  await p.locator(`[data-handoff-id="${first.id}"]`).waitFor();
+  await apply(p, first);
+  assert.equal(
+    await p
+      .getByRole("button", { name: "Waiting (1)", exact: true })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  await p.locator(`[data-handoff-id="${second.id}"]`).waitFor();
+  await p.waitForTimeout(3500);
+  assert.equal(second.state, "RECEIVED");
+  assert.equal(
+    await p
+      .getByRole("button", { name: "Waiting (1)", exact: true })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  await p.getByRole("button", { name: "Open history", exact: true }).click();
+  assert.equal(
+    await p
+      .getByRole("button", { name: "History (1)", exact: true })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  assert.equal(await p.locator(`[data-handoff-id="${first.id}"]`).count(), 1);
 });

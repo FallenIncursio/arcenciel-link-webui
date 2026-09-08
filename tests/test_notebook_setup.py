@@ -65,7 +65,7 @@ def test_health_probe_identifies_the_notebook_client(monkeypatch):
 
     monkeypatch.setattr(link, "urlopen", serve)
     link.wait_for_worker()
-    assert calls[0].get_header("User-agent") == "ArcEnCiel-Link-Notebook/2.5.3"
+    assert calls[0].get_header("User-agent") == "ArcEnCiel-Link-Notebook/2.5.4"
 
 
 def test_install_pins_a_named_branch_and_preserves_existing_branches(tmp_path, monkeypatch):
@@ -106,7 +106,7 @@ def test_install_pins_a_named_branch_and_preserves_existing_branches(tmp_path, m
     link.install_extension("comfyui", host)
     assert (
         subprocess.check_output(["git", "-C", str(extension), "branch", "--show-current"], text=True).strip()
-        == "arcenciel-link-v2.5.3"
+        == "arcenciel-link-v2.5.4"
     )
     assert subprocess.check_output(["git", "-C", str(extension), "rev-parse", "HEAD"], text=True).strip() == original
     assert subprocess.check_output(["git", "-C", str(extension), "rev-parse", "main"], text=True).strip() == original

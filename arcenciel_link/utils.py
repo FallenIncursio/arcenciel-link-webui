@@ -7,13 +7,15 @@ import json
 import logging
 import os
 import shlex
+import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Generator, List, Set
 
 import requests
 
-from . import job_attempt
+from . import hash_cache, job_attempt
 from .version import VERSION
 
 _DEFAULT_USER_AGENT = f"ArcEnCiel-Link-Forge/{VERSION}"
@@ -90,7 +92,10 @@ def sha256_of_file(p: Path) -> str:
 
 CACHE_DIR = Path(__file__).parent.parent / "cache"
 CACHE_FILE = CACHE_DIR / "hashes.json"
-_CACHE_LOCK = threading.Lock()
+_CACHE_LOCK = threading.RLock()
+_CACHE_DIRTY = False
+_MODEL_CATALOG_DIRTY = threading.Event()
+_CACHE_LAST_SAVE = 0.0
 _CACHE_DATA: Dict[str, Dict] | None = None
 
 MODEL_EXTS = {".safetensors", ".ckpt", ".pt", ".sft", ".gguf"}
@@ -176,17 +181,58 @@ def _get_model_dirs(root: Path) -> List[Path]:
 def _load_cache() -> Dict[str, Dict]:
     if CACHE_FILE.exists():
         try:
-            return json.loads(CACHE_FILE.read_text())
+            data = json.loads(CACHE_FILE.read_text())
+            return (
+                {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, dict)}
+                if isinstance(data, dict)
+                else {}
+            )
         except Exception:
             pass
     return {}
 
 
 def _save_cache(data: Dict):
+    global _CACHE_DATA, _CACHE_DIRTY, _CACHE_LAST_SAVE
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    CACHE_FILE.write_text(json.dumps(data, indent=2))
-    global _CACHE_DATA
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=CACHE_DIR, prefix=".hashes-", delete=False
+        ) as stream:
+            temporary = stream.name
+            json.dump(data, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, CACHE_FILE)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
     _CACHE_DATA = data
+    _CACHE_DIRTY = False
+    _CACHE_LAST_SAVE = time.monotonic()
+
+
+def flush_hash_cache():
+    with _CACHE_LOCK:
+        if _CACHE_DIRTY:
+            _save_cache(_ensure_cache())
+
+
+def cached_model_hash(path, check=lambda: None, force=False):
+    global _CACHE_DIRTY
+    with _CACHE_LOCK:
+        digest, changed, source = hash_cache.resolve(path, _ensure_cache(), check, force)
+        _CACHE_DIRTY |= changed
+        if changed:
+            _MODEL_CATALOG_DIRTY.set()
+        if _CACHE_DIRTY and time.monotonic() - _CACHE_LAST_SAVE >= 3:
+            _save_cache(_ensure_cache())
+        if source != "cached":
+            import logging
+
+            logging.getLogger("arcenciel_link").info("Model hash: %s (%s)", source, path.name)
+        return digest
 
 
 def _ensure_cache() -> Dict[str, Dict]:
@@ -208,47 +254,20 @@ def _iter_model_files(root: Path) -> Generator[Path, None, None]:
 def list_model_hashes() -> List[str]:
     from .config import load
 
-    with _CACHE_LOCK:
-        cache = _ensure_cache()
-        KNOWN_HASHES.clear()
-        webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
-        cfg = load()
-        if cfg.get("webui_root"):
-            webui_root = Path(cfg["webui_root"])
-
-        updated = False
-        result: List[str] = []
-
-        for p in _iter_model_files(webui_root):
-            stat = p.stat()
-            mtime = int(stat.st_mtime)
-            key = str(p.resolve())
-            entry = cache.get(key)
-
-            if entry and entry.get("mtime_ns") == stat.st_mtime_ns and entry.get("size") == stat.st_size:
-                h = entry.get("hash")
-            else:
-                log.info("hashing %s", p)
-                h = sha256_of_file(p)
-                after = p.stat()
-                if (after.st_mtime_ns, after.st_size) != (stat.st_mtime_ns, stat.st_size):
-                    raise RuntimeError("Model changed during inventory scan")
-                cache[key] = {"mtime": mtime, "mtime_ns": stat.st_mtime_ns, "size": stat.st_size, "hash": h}
-                updated = True
-
-            if h:
-                result.append(h)
-
-        orphan_keys = [k for k in cache if not Path(k).exists()]
-        for k in orphan_keys:
-            del cache[k]
-            updated = True
-
-        if updated:
-            _save_cache(cache)
-
-        KNOWN_HASHES.update(result)
-        return result
+    webui_root = Path(os.getenv("SD_WEBUI_ROOT", Path.cwd()))
+    cfg = load()
+    if cfg.get("webui_root"):
+        webui_root = Path(cfg["webui_root"])
+    files = _iter_model_files(webui_root)
+    result = []
+    try:
+        for path in dict.fromkeys(files):
+            result.append(cached_model_hash(path))
+    finally:
+        flush_hash_cache()
+    KNOWN_HASHES.clear()
+    KNOWN_HASHES.update(result)
+    return list(dict.fromkeys(result))
 
 
 def update_cached_hash(path: Path, hash_value: str) -> List[str]:
@@ -264,10 +283,13 @@ def update_cached_hash(path: Path, hash_value: str) -> List[str]:
         _save_cache(cache)
 
         hashes = []
-        for entry in cache.values():
-            h = entry.get("hash")
-            if h:
-                hashes.append(h)
+        for cached_path, entry in cache.items():
+            try:
+                existing = Path(cached_path)
+                if existing.is_file() and hash_cache.valid(entry, existing.stat()):
+                    hashes.append(entry["hash"])
+            except OSError:
+                continue
 
         KNOWN_HASHES.clear()
         KNOWN_HASHES.update(hashes)

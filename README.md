@@ -1,5 +1,13 @@
 # ArcEnCiel Link for Forge / Stable Diffusion WebUI
 
+## Arc en Ciel Link 2.5.4
+
+The native panel is now named **Arc en Ciel Link**. Applying a draft keeps the selected Waiting/History view, with a direct Undo action. Drafts still require explicit confirmation and never start generation.
+
+Inventory and maintenance scans share one persistent SHA-256 cache. Local NTFS/ReFS, ext-family, XFS and Btrfs files can reuse their cached hash after a move when file identity, creation time, size, modification time and a content sample match. Copies, ambiguous matches and unsupported/network filesystems are fully hashed at their new path. The sample alone never identifies a model. Existing cache entries are preserved; entries without a recorded identity require a full hash on their first move.
+
+Cache reuse is a performance optimization based on filesystem metadata, not a fresh integrity verification. It does not detect every possible content change accompanied by deliberately restored metadata. Download integrity still uses a full SHA-256. Completed scan results are checkpointed atomically and survive cancellation; periodic and manual scans no longer hash the same unchanged file independently. Cache diagnostics distinguish hashing, cached files and recognized moves. No per-model text files or server/database migration are required. Restart the generator and reload the browser after updating.
+
 ArcEnCiel Link connects [arcenciel.io](https://arcenciel.io) to Forge/WebUI: download models, review image settings in your generator, and prepare the resources they require.
 
 ## Reliable native inbox (2.5.3)

@@ -206,7 +206,9 @@
         "aec-connection",
       );
       title.append(
-        ...(adapter.accordion ? [] : [icon("link"), el("h3", "Link inbox")]),
+        ...(adapter.accordion
+          ? []
+          : [icon("link"), el("h3", "Arc en Ciel Link")]),
         badge,
       );
       const controls = el("div", undefined, "aec-actions");
@@ -226,6 +228,28 @@
       reloadButton.hidden = true;
       controls.append(refreshButton, reloadButton);
       toolbar.append(title, controls);
+      let lastAppliedId;
+      const noticeActions = el("div", undefined, "aec-actions");
+      noticeActions.hidden = true;
+      noticeActions.append(
+        button(
+          "Undo",
+          () => {
+            const item = items.find((i) => i.id === lastAppliedId);
+            if (item) void undoItem(item);
+          },
+          "undo",
+        ),
+        button(
+          "Open history",
+          () => {
+            view = "history";
+            limit = 5;
+            render();
+          },
+          "clock",
+        ),
+      );
       const status = el("p", undefined, "aec-notice");
       status.setAttribute("role", "status");
       const hint = el("p", undefined, "aec-muted");
@@ -290,7 +314,15 @@
         }
         return local;
       }
-      container.replaceChildren(toolbar, status, hint, tabs, list, more);
+      container.replaceChildren(
+        toolbar,
+        status,
+        noticeActions,
+        hint,
+        tabs,
+        list,
+        more,
+      );
       const visibility = () => {
         if (!document.hidden) void refresh();
       };
@@ -336,8 +368,43 @@
           control.disabled = false;
         }
       }
+      async function undoItem(item) {
+        const receipt = saved(item.id);
+        if (!receipt || receipt.stage !== "applied") return;
+
+        try {
+          if (!equal(await adapter.snapshot(), receipt.after))
+            throw new Error(
+              "Your editor changed since import. Export the backup to keep your newer work.",
+            );
+          if (item.state === "CLAIMED")
+            await window.AECLinkDrafts.request("event", {
+              id: item.id,
+              editorId: receipt.editorId,
+              action: "applied",
+              receipt: { fields: receipt.fields },
+            });
+          await adapter.restore(receipt.before);
+          if (!equal(await adapter.snapshot(), receipt.before))
+            throw new Error(
+              "The editor did not confirm the restored values. Keep your backup.",
+            );
+          save(item.id, { ...receipt, stage: "undone" });
+          await window.AECLinkDrafts.request("event", {
+            id: item.id,
+            editorId: receipt.editorId,
+            action: "undone",
+          });
+          notice("Previous txt2img settings restored.");
+          await refresh(true);
+        } catch (e) {
+          notice(e.message, true);
+        }
+      }
       function render() {
         if (disposed) return;
+        noticeActions.hidden =
+          view === "history" || saved(lastAppliedId)?.stage !== "applied";
         badge.textContent = readinessError
           ? "Editor needs attention"
           : !ready
@@ -497,42 +564,7 @@
                   "refresh",
                 ),
               );
-            actions.append(
-              button(
-                "Undo",
-                async () => {
-                  try {
-                    if (!equal(await adapter.snapshot(), receipt.after))
-                      throw new Error(
-                        "Your editor changed since import. Export the backup to keep your newer work.",
-                      );
-                    if (item.state === "CLAIMED")
-                      await window.AECLinkDrafts.request("event", {
-                        id: item.id,
-                        editorId: receipt.editorId,
-                        action: "applied",
-                        receipt: { fields: receipt.fields },
-                      });
-                    await adapter.restore(receipt.before);
-                    if (!equal(await adapter.snapshot(), receipt.before))
-                      throw new Error(
-                        "The editor did not confirm the restored values. Keep your backup.",
-                      );
-                    save(item.id, { ...receipt, stage: "undone" });
-                    await window.AECLinkDrafts.request("event", {
-                      id: item.id,
-                      editorId: receipt.editorId,
-                      action: "undone",
-                    });
-                    notice("Previous txt2img settings restored.");
-                    await refresh(true);
-                  } catch (e) {
-                    notice(e.message, true);
-                  }
-                },
-                "undo",
-              ),
-            );
+            actions.append(button("Undo", () => void undoItem(item), "undo"));
           }
           if (receipt?.before) {
             const menu = el("details", undefined, "aec-history-actions");
@@ -729,6 +761,9 @@
                 : {}),
             });
             claimed = true;
+            items = items.map((row) =>
+              row.id === item.id ? { ...row, state: "CLAIMED" } : row,
+            );
             if (selectionEnabled) {
               if (
                 !claim.receipt?.fields ||
@@ -740,6 +775,9 @@
               fields = claim.receipt.fields;
             }
             claimed = true;
+            items = items.map((row) =>
+              row.id === item.id ? { ...row, state: "CLAIMED" } : row,
+            );
             if (!equal(await adapter.snapshot(), before))
               throw new Error(
                 "Your editor changed while claiming the draft. Review a new handoff.",
@@ -775,14 +813,19 @@
                 action: "applied",
                 receipt: { fields: actual },
               });
+              items = items.map((row) =>
+                row.id === item.id ? { ...row, state: "APPLIED" } : row,
+              );
               message.textContent =
-                "Settings applied for your next generation. Undo is available in History.";
+                "Settings applied for your next generation. Your waiting drafts stay here.";
             } catch {
               message.textContent =
                 "Applied locally; the server receipt is pending. Close and use “Confirm editor receipt”. Do not import again.";
             }
             apply.hidden = true;
-            view = "history";
+            lastAppliedId = item.id;
+            notice(message.textContent);
+            render();
           } catch (e) {
             if (
               e.uncertain ||

@@ -20,7 +20,7 @@ class Script(scripts.Script):
             return []
         if native_fields.ui_id is None:
             native_fields.reset()
-        with gr.Accordion("Link inbox", open=False, elem_id="aec-link-inbox-accordion"):
+        with gr.Accordion("Arc en Ciel Link", open=False, elem_id="aec-link-inbox-accordion"):
             gr.HTML('<div id="aec-link-draft-inbox"></div>')
         native_fields.bridge["root"] = gr.context.Context.root_block
         native_fields.bridge["incoming"] = gr.Textbox(

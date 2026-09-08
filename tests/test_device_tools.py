@@ -15,7 +15,13 @@ spec.loader.exec_module(tools)
 
 
 @pytest.fixture(autouse=True)
-def reset():
+def reset(monkeypatch, tmp_path):
+    from arcenciel_link import utils
+
+    monkeypatch.setattr(utils, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(utils, "CACHE_FILE", tmp_path / "cache/hashes.json")
+    monkeypatch.setattr(utils, "_CACHE_DATA", None)
+    monkeypatch.setattr(utils, "_CACHE_DIRTY", False)
     tools._hash_cache.clear()
 
 

@@ -1,6 +1,5 @@
 """Device-scoped maintenance. Progress contains counts and stable codes, never paths or keys."""
 
-import hashlib
 import json
 import os
 import re
@@ -56,28 +55,23 @@ def scan(roots, check, progress):
                     files.add(p)
                     if len(files) > 10000:
                         raise ToolFailure("SCAN_FAILED")
+    from arcenciel_link import utils
+
     result = []
     progress(0, len(files))
-    for i, path in enumerate(sorted(files)):
-        check()
-        before = path.stat()
-        stamp = (before.st_mtime_ns, before.st_size)
-        cached = _hash_cache.get(str(path))
-        if cached and cached[:2] == stamp:
-            digest = cached[2]
-        else:
-            h = hashlib.sha256()
-            with path.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    check()
-                    h.update(chunk)
-            after = path.stat()
-            if (after.st_mtime_ns, after.st_size) != stamp:
-                raise ToolFailure("SCAN_FAILED")
-            digest = h.hexdigest()
-            _hash_cache[str(path)] = (*stamp, digest)
-        result.append((digest, path))
-        progress(i + 1, len(files))
+    try:
+        for i, path in enumerate(sorted(files)):
+            check()
+            digest = utils.cached_model_hash(path, check)
+            stat = path.stat()
+            # Compatibility view only: all reads and writes use the persistent cache.
+            _hash_cache[str(path)] = (stat.st_mtime_ns, stat.st_size, digest)
+            result.append((digest, path))
+            progress(i + 1, len(files))
+    except OSError as exc:
+        raise ToolFailure("SCAN_FAILED") from exc
+    finally:
+        utils.flush_hash_cache()
     for key in list(_hash_cache):
         if Path(key) not in files:
             del _hash_cache[key]

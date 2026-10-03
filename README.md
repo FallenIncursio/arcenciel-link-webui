@@ -1,6 +1,8 @@
 # ArcEnCiel Link for Forge / Stable Diffusion WebUI
 
-## Arc en Ciel Link 2.5.4
+## Arc en Ciel Link 2.5.5
+
+Colab startup now keeps its configured enabled state when Forge loads older settings. Saving connection settings preserves the running or paused worker; the Enable switch still explicitly pauses/resumes downloads. The notebook pins Forge 2.5.5 and retains ComfyUI/SwarmUI 2.5.4.
 
 The native panel is now named **Arc en Ciel Link**. Applying a draft keeps the selected Waiting/History view, with a direct Undo action. Drafts still require explicit confirmation and never start generation.
 

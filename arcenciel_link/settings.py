@@ -7,11 +7,17 @@ from .config import _detect_dev_mode, load, save
 _cfg = load()
 
 
-def _apply_opts():
+def _apply_opts(*, enabled_changed=False):
+    import arcenciel_link.client as client
+
     _cfg.update(
         base_url=shared.opts.data.get("arcenciel_link_base_url", _cfg["base_url"]).rstrip("/"),
         link_key=shared.opts.data.get("arcenciel_link_access_key", _cfg.get("link_key", "")).strip(),
-        enabled=bool(shared.opts.data.get("arcenciel_link_enabled", _cfg.get("enabled", False))),
+        enabled=(
+            bool(shared.opts.data.get("arcenciel_link_enabled", _cfg.get("enabled", False)))
+            if enabled_changed
+            else client._is_worker_running()
+        ),
     )
     if "ARCENCIEL_LINK_KEY" in os.environ:
         _cfg["link_key"] = os.environ["ARCENCIEL_LINK_KEY"].strip()
@@ -19,13 +25,13 @@ def _apply_opts():
         _cfg["base_url"] = os.environ["ARCENCIEL_LINK_URL"].strip().rstrip("/")
     save(_cfg)
 
-    import arcenciel_link.client as client
-
     client.apply_worker_state(_cfg["enabled"], link_key=_cfg.get("link_key", ""))
 
 
 def on_ui_settings():
     section = ("arcenciel_link", "ArcEnCiel")
+    if "ARCENCIEL_LINK_ENABLED" in os.environ:
+        shared.opts.data["arcenciel_link_enabled"] = bool(_cfg.get("enabled", False))
     if _detect_dev_mode():
         shared.opts.add_option(
             "arcenciel_link_base_url",
@@ -51,7 +57,7 @@ def on_ui_settings():
             bool(_cfg.get("enabled", False)),
             "Enable ArcEnCiel Link worker",
             section=section,
-            onchange=_apply_opts,
+            onchange=lambda: _apply_opts(enabled_changed=True),
         ),
     )
 

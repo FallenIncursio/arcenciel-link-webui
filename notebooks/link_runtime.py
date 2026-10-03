@@ -10,7 +10,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-RELEASE = "v2.5.4"
+RELEASE = "v2.5.5"
+HOST_RELEASES = {"webui": RELEASE, "comfyui": "v2.5.4", "swarmui": "v2.5.4"}
 BASE_URL = "https://link.arcenciel.io/api/link"
 HOSTS = {
     "webui": ("launch.py", "extensions/arcenciel-link-webui", "arcenciel-link-webui"),
@@ -57,6 +58,7 @@ def validate_key(key: str) -> str:
 
 def install_extension(kind: str, root: str | Path) -> Path:
     root = validate_host(kind, root)
+    release = HOST_RELEASES[kind]
     _, relative, repository = HOSTS[kind]
     extension = root / relative
     if kind == "comfyui":
@@ -76,16 +78,16 @@ def install_extension(kind: str, root: str | Path) -> Path:
             raise RuntimeError("Existing extension has a different origin; review it before updating")
         if subprocess.check_output(["git", "-C", str(extension), "status", "--porcelain"], text=True).strip():
             raise RuntimeError("Extension has local changes; preserve them before updating")
-        subprocess.run(["git", "-C", str(extension), "fetch", "origin", "tag", RELEASE], check=True)
+        subprocess.run(["git", "-C", str(extension), "fetch", "origin", "tag", release], check=True)
     else:
         extension.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "clone", "--depth", "1", "--branch", RELEASE, remote, str(extension)], check=True)
+        subprocess.run(["git", "clone", "--depth", "1", "--branch", release, remote, str(extension)], check=True)
     commit = subprocess.check_output(
-        ["git", "-C", str(extension), "rev-parse", f"{RELEASE}^{{commit}}"], text=True
+        ["git", "-C", str(extension), "rev-parse", f"{release}^{{commit}}"], text=True
     ).strip()
     # Forge reads active_branch while loading extension metadata. Keep the pin on a
     # named local branch without overwriting any existing branch or local commit.
-    branch = f"arcenciel-link-{RELEASE}"
+    branch = f"arcenciel-link-{release}"
     existing = subprocess.run(
         ["git", "-C", str(extension), "rev-parse", "--verify", f"refs/heads/{branch}"],
         capture_output=True,
@@ -99,7 +101,7 @@ def install_extension(kind: str, root: str | Path) -> Path:
         subprocess.run(["git", "-C", str(extension), "checkout", "-b", branch, commit], check=True)
     if kind != "swarmui":
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(extension / "requirements.txt")], check=True)
-    print(f"Link {RELEASE} installed for {kind} ({commit[:12]}). Restart the host to load it.")
+    print(f"Link {release} installed for {kind} ({commit[:12]}). Restart the host to load it.")
     return extension
 
 
